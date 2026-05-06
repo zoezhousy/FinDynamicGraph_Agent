@@ -1,0 +1,5 @@
+pandas
+pyarrow
+yfinance
+tavily-python
+neo4j

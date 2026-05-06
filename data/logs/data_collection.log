@@ -1,0 +1,288 @@
+2026-05-05 15:14:36,018 | INFO | Start collecting ticker=0005.HK
+2026-05-05 15:14:39,019 | ERROR | OHLCV collection failed for 0005.HK: 'tuple' object has no attribute 'lower'
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 31, in run_collection
+    ohlcv_df = market_collector.fetch_ohlcv(ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in fetch_ohlcv
+    frame.columns = [c.lower() for c in frame.columns]
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in <listcomp>
+    frame.columns = [c.lower() for c in frame.columns]
+AttributeError: 'tuple' object has no attribute 'lower'
+2026-05-05 15:14:39,545 | WARNING | Retryable error in _search (attempt 1/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 1.27s
+2026-05-05 15:14:41,258 | WARNING | Retryable error in _search (attempt 2/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 2.36s
+2026-05-05 15:14:44,085 | WARNING | Retryable error in _search (attempt 3/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 4.41s
+2026-05-05 15:14:48,957 | WARNING | Retryable error in _search (attempt 4/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 8.86s
+2026-05-05 15:14:58,287 | ERROR | News collection failed for 0005.HK: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 37, in run_collection
+    news_df = news_collector.fetch_news(ticker, limit=config.news_limit_per_ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 45, in fetch_news
+    resp = _search()
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\utils\retry.py", line 23, in wrapper
+    return func(*args, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 38, in _search
+    return self.client.search(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 202, in search
+    response_dict = self._search(query,
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 151, in _search
+    response = self.session.post(url, data=payload, timeout=timeout, **({"headers": override_headers} if override_headers else {}))
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 640, in post
+    return self.request("POST", url, data=data, json=json, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 499, in request
+    self.putheader(header, value)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 413, in putheader
+    super().putheader(header, *values)
+  File "C:\Program Files\Python310\lib\http\client.py", line 1255, in putheader
+    values[i] = one_value.encode('latin-1')
+UnicodeEncodeError: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+2026-05-05 15:14:58,308 | INFO | Done ticker=0005.HK
+2026-05-05 15:14:58,309 | INFO | Start collecting ticker=0700.HK
+2026-05-05 15:14:58,547 | ERROR | OHLCV collection failed for 0700.HK: 'tuple' object has no attribute 'lower'
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 31, in run_collection
+    ohlcv_df = market_collector.fetch_ohlcv(ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in fetch_ohlcv
+    frame.columns = [c.lower() for c in frame.columns]
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in <listcomp>
+    frame.columns = [c.lower() for c in frame.columns]
+AttributeError: 'tuple' object has no attribute 'lower'
+2026-05-05 15:14:59,301 | WARNING | Retryable error in _search (attempt 1/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 1.34s
+2026-05-05 15:15:01,101 | WARNING | Retryable error in _search (attempt 2/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 2.89s
+2026-05-05 15:15:04,473 | WARNING | Retryable error in _search (attempt 3/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 4.84s
+2026-05-05 15:15:09,797 | WARNING | Retryable error in _search (attempt 4/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 8.79s
+2026-05-05 15:15:19,049 | ERROR | News collection failed for 0700.HK: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 37, in run_collection
+    news_df = news_collector.fetch_news(ticker, limit=config.news_limit_per_ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 45, in fetch_news
+    resp = _search()
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\utils\retry.py", line 23, in wrapper
+    return func(*args, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 38, in _search
+    return self.client.search(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 202, in search
+    response_dict = self._search(query,
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 151, in _search
+    response = self.session.post(url, data=payload, timeout=timeout, **({"headers": override_headers} if override_headers else {}))
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 640, in post
+    return self.request("POST", url, data=data, json=json, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 499, in request
+    self.putheader(header, value)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 413, in putheader
+    super().putheader(header, *values)
+  File "C:\Program Files\Python310\lib\http\client.py", line 1255, in putheader
+    values[i] = one_value.encode('latin-1')
+UnicodeEncodeError: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+2026-05-05 15:15:19,052 | INFO | Done ticker=0700.HK
+2026-05-05 15:15:19,053 | INFO | Start collecting ticker=1299.HK
+2026-05-05 15:15:19,488 | ERROR | OHLCV collection failed for 1299.HK: 'tuple' object has no attribute 'lower'
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 31, in run_collection
+    ohlcv_df = market_collector.fetch_ohlcv(ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in fetch_ohlcv
+    frame.columns = [c.lower() for c in frame.columns]
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in <listcomp>
+    frame.columns = [c.lower() for c in frame.columns]
+AttributeError: 'tuple' object has no attribute 'lower'
+2026-05-05 15:15:20,065 | WARNING | Retryable error in _search (attempt 1/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 1.25s
+2026-05-05 15:15:21,810 | WARNING | Retryable error in _search (attempt 2/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 2.46s
+2026-05-05 15:15:24,707 | WARNING | Retryable error in _search (attempt 3/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 4.03s
+2026-05-05 15:15:29,197 | WARNING | Retryable error in _search (attempt 4/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 8.36s
+2026-05-05 15:15:38,033 | ERROR | News collection failed for 1299.HK: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 37, in run_collection
+    news_df = news_collector.fetch_news(ticker, limit=config.news_limit_per_ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 45, in fetch_news
+    resp = _search()
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\utils\retry.py", line 23, in wrapper
+    return func(*args, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 38, in _search
+    return self.client.search(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 202, in search
+    response_dict = self._search(query,
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 151, in _search
+    response = self.session.post(url, data=payload, timeout=timeout, **({"headers": override_headers} if override_headers else {}))
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 640, in post
+    return self.request("POST", url, data=data, json=json, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 499, in request
+    self.putheader(header, value)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 413, in putheader
+    super().putheader(header, *values)
+  File "C:\Program Files\Python310\lib\http\client.py", line 1255, in putheader
+    values[i] = one_value.encode('latin-1')
+UnicodeEncodeError: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+2026-05-05 15:15:38,036 | INFO | Done ticker=1299.HK
+2026-05-05 15:16:18,136 | INFO | Start collecting ticker=0005.HK
+2026-05-05 15:16:18,673 | ERROR | OHLCV collection failed for 0005.HK: 'tuple' object has no attribute 'lower'
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 31, in run_collection
+    ohlcv_df = market_collector.fetch_ohlcv(ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in fetch_ohlcv
+    frame.columns = [c.lower() for c in frame.columns]
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in <listcomp>
+    frame.columns = [c.lower() for c in frame.columns]
+AttributeError: 'tuple' object has no attribute 'lower'
+2026-05-05 15:16:19,362 | WARNING | Retryable error in _search (attempt 1/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 1.01s
+2026-05-05 15:16:20,830 | WARNING | Retryable error in _search (attempt 2/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 2.27s
+2026-05-05 15:16:23,569 | WARNING | Retryable error in _search (attempt 3/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 4.45s
+2026-05-05 15:16:28,462 | WARNING | Retryable error in _search (attempt 4/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 8.69s
+2026-05-05 15:16:37,647 | ERROR | News collection failed for 0005.HK: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 37, in run_collection
+    news_df = news_collector.fetch_news(ticker, limit=config.news_limit_per_ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 45, in fetch_news
+    resp = _search()
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\utils\retry.py", line 23, in wrapper
+    return func(*args, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 38, in _search
+    return self.client.search(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 202, in search
+    response_dict = self._search(query,
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 151, in _search
+    response = self.session.post(url, data=payload, timeout=timeout, **({"headers": override_headers} if override_headers else {}))
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 640, in post
+    return self.request("POST", url, data=data, json=json, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 499, in request
+    self.putheader(header, value)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 413, in putheader
+    super().putheader(header, *values)
+  File "C:\Program Files\Python310\lib\http\client.py", line 1255, in putheader
+    values[i] = one_value.encode('latin-1')
+UnicodeEncodeError: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+2026-05-05 15:16:37,667 | INFO | Done ticker=0005.HK
+2026-05-05 15:16:37,667 | INFO | Start collecting ticker=0700.HK
+2026-05-05 15:16:37,823 | ERROR | OHLCV collection failed for 0700.HK: 'tuple' object has no attribute 'lower'
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 31, in run_collection
+    ohlcv_df = market_collector.fetch_ohlcv(ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in fetch_ohlcv
+    frame.columns = [c.lower() for c in frame.columns]
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in <listcomp>
+    frame.columns = [c.lower() for c in frame.columns]
+AttributeError: 'tuple' object has no attribute 'lower'
+2026-05-05 15:16:38,636 | WARNING | Retryable error in _search (attempt 1/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 1.38s
+2026-05-05 15:16:40,485 | WARNING | Retryable error in _search (attempt 2/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 2.30s
+2026-05-05 15:16:43,256 | WARNING | Retryable error in _search (attempt 3/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 4.77s
+2026-05-05 15:16:48,480 | WARNING | Retryable error in _search (attempt 4/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 8.23s
+2026-05-05 15:16:57,173 | ERROR | News collection failed for 0700.HK: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 37, in run_collection
+    news_df = news_collector.fetch_news(ticker, limit=config.news_limit_per_ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 45, in fetch_news
+    resp = _search()
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\utils\retry.py", line 23, in wrapper
+    return func(*args, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 38, in _search
+    return self.client.search(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 202, in search
+    response_dict = self._search(query,
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 151, in _search
+    response = self.session.post(url, data=payload, timeout=timeout, **({"headers": override_headers} if override_headers else {}))
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 640, in post
+    return self.request("POST", url, data=data, json=json, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 499, in request
+    self.putheader(header, value)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 413, in putheader
+    super().putheader(header, *values)
+  File "C:\Program Files\Python310\lib\http\client.py", line 1255, in putheader
+    values[i] = one_value.encode('latin-1')
+UnicodeEncodeError: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+2026-05-05 15:16:57,176 | INFO | Done ticker=0700.HK
+2026-05-05 15:16:57,176 | INFO | Start collecting ticker=1299.HK
+2026-05-05 15:16:57,332 | ERROR | OHLCV collection failed for 1299.HK: 'tuple' object has no attribute 'lower'
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 31, in run_collection
+    ohlcv_df = market_collector.fetch_ohlcv(ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in fetch_ohlcv
+    frame.columns = [c.lower() for c in frame.columns]
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\market_collector.py", line 57, in <listcomp>
+    frame.columns = [c.lower() for c in frame.columns]
+AttributeError: 'tuple' object has no attribute 'lower'
+2026-05-05 15:16:58,180 | WARNING | Retryable error in _search (attempt 1/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 1.12s
+2026-05-05 15:16:59,746 | WARNING | Retryable error in _search (attempt 2/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 2.87s
+2026-05-05 15:17:03,079 | WARNING | Retryable error in _search (attempt 3/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 4.23s
+2026-05-05 15:17:07,776 | WARNING | Retryable error in _search (attempt 4/4): 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256). Sleeping 8.05s
+2026-05-05 15:17:16,285 | ERROR | News collection failed for 1299.HK: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+Traceback (most recent call last):
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\main_collect.py", line 37, in run_collection
+    news_df = news_collector.fetch_news(ticker, limit=config.news_limit_per_ticker)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 45, in fetch_news
+    resp = _search()
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\utils\retry.py", line 23, in wrapper
+    return func(*args, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\src\collectors\news_collector.py", line 38, in _search
+    return self.client.search(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 202, in search
+    response_dict = self._search(query,
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\tavily\tavily.py", line 151, in _search
+    response = self.session.post(url, data=payload, timeout=timeout, **({"headers": override_headers} if override_headers else {}))
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 640, in post
+    return self.request("POST", url, data=data, json=json, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\requests\adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 499, in request
+    self.putheader(header, value)
+  File "E:\GitHub\Multi_Agent_Trading_with_Dynamic_KG\.venv\lib\site-packages\urllib3\connection.py", line 413, in putheader
+    super().putheader(header, *values)
+  File "C:\Program Files\Python310\lib\http\client.py", line 1255, in putheader
+    values[i] = one_value.encode('latin-1')
+UnicodeEncodeError: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
+2026-05-05 15:17:16,288 | INFO | Done ticker=1299.HK
