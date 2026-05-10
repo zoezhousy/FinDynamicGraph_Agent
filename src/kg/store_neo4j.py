@@ -8,6 +8,15 @@ from neo4j import GraphDatabase, basic_auth
 from src.kg.schema import Entity, Evidence, Relation
 
 
+_ALLOWED_REL_TYPES = {
+    "HAS_SIGNAL",
+    "MENTIONED_IN",
+    "SUPPORTED_BY",
+    "HAS_RISK",
+    "RELATES_TO",
+}
+
+
 class Neo4jKGStore:
     """Thin wrapper around Neo4j for storing the financial KG."""
 
@@ -71,30 +80,33 @@ class Neo4jKGStore:
             session.run(cypher, rows=rows)
 
     def upsert_relations(self, relations: Iterable[Relation]) -> None:
-        rows = []
+        grouped: dict[str, list[dict]] = {}
         for relation in relations:
+            rel_type = relation.type
+            if rel_type not in _ALLOWED_REL_TYPES:
+                raise ValueError(f"Unsupported relationship type: {rel_type}")
             data = relation.model_dump()
             for key in ("as_of_date", "valid_from", "valid_to"):
                 if data.get(key) is not None:
                     data[key] = data[key].isoformat()
-            rows.append(data)
+            grouped.setdefault(rel_type, []).append(data)
 
-        if not rows:
-            return
-
-        cypher = """
-        UNWIND $rows AS row
-        MATCH (s {entity_id: row.start_id})
-        MATCH (t {entity_id: row.end_id})
-        MERGE (s)-[r:REL {type: row.type, as_of_date: row.as_of_date}]->(t)
-        SET r.confidence = row.confidence,
-            r.direction = row.direction,
-            r.valid_from = row.valid_from,
-            r.valid_to = row.valid_to,
-            r.evidence_ids = row.evidence_ids
-        """
         with self._driver.session(database=self._database) as session:
-            session.run(cypher, rows=rows)
+            for rel_type, rows in grouped.items():
+                if not rows:
+                    continue
+                query = f"""
+                UNWIND $rows AS row
+                MATCH (s {{entity_id: row.start_id}})
+                MATCH (t {{entity_id: row.end_id}})
+                MERGE (s)-[r:{rel_type} {{as_of_date: row.as_of_date}}]->(t)
+                SET r.confidence = row.confidence,
+                    r.direction = row.direction,
+                    r.valid_from = row.valid_from,
+                    r.valid_to = row.valid_to,
+                    r.evidence_ids = row.evidence_ids
+                """
+                session.run(query, rows=rows)
 
     def health_check(self) -> bool:
         try:

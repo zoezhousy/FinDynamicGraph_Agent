@@ -25,7 +25,6 @@ def news_agent(subgraph: Dict[str, List[Dict[str, Any]]]) -> AgentReport:
             stance="neutral",
             evidence_refs=[],
         )
-    # 简化：按条数直接给一个“信息量多→更确定”的信号
     stance = "bullish" if len(news_nodes) >= 3 else "neutral"
     refs = [{"url": n.get("url"), "title": n.get("title")} for n in news_nodes[:5]]
     return AgentReport(
@@ -61,22 +60,19 @@ def portfolio_manager_decide(
     trade_date: datetime,
     reports: List[AgentReport],
 ) -> Dict[str, Any]:
-    # 简单多数投票规则
     score = 0
-    for r in reports:
-        if r.stance == "bullish":
+    for report in reports:
+        if report.stance == "bullish":
             score += 1
-        elif r.stance == "bearish":
+        elif report.stance == "bearish":
             score -= 1
 
-    if score >= 2:
+    if score >= 1:
         action: DecisionAction = "buy"
-    elif score <= -2:
+    elif score <= -1:
         action = "sell"
-    elif -1 <= score <= 1:
-        action = "hold"
     else:
-        action = "abstain"
+        action = "hold"
 
     return {
         "ticker": ticker,
@@ -85,4 +81,3 @@ def portfolio_manager_decide(
         "score": score,
         "reports": [r.__dict__ for r in reports],
     }
-

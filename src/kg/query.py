@@ -25,9 +25,9 @@ class KGQueryClient:
     ) -> dict[str, list[dict[str, Any]]]:
         cypher = """
         MATCH (c:Company {ticker: $ticker})
-        OPTIONAL MATCH (c)-[r1:REL {type: 'HAS_SIGNAL'}]->(s:IndicatorSignal)
+        OPTIONAL MATCH (c)-[r1:HAS_SIGNAL]->(s:IndicatorSignal)
           WHERE datetime(r1.as_of_date) <= datetime($as_of)
-        OPTIONAL MATCH (c)-[r2:REL {type: 'MENTIONED_IN'}]->(n:NewsEvent)
+        OPTIONAL MATCH (c)-[r2:MENTIONED_IN]->(n:NewsEvent)
           WHERE datetime(r2.as_of_date) <= datetime($as_of)
         RETURN c,
                collect(DISTINCT s)[0..$max_signals] AS signals,

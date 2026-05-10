@@ -73,6 +73,9 @@ def run_experiment_for_tickers(
         kg_client.close()
 
     df = pd.DataFrame(results_rows)
+    print(df[["system", "ticker", "trade_date", "action", "trade_executed", "raw_return"]])
+    print(df.groupby(["system", "action"]).size())
+
     out_dir = Path("data") / "experiments"
     out_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_dir / "trades.parquet", index=False)
@@ -85,8 +88,11 @@ def main() -> None:
     trade_dates = ["2023-01-10", "2023-03-15", "2023-06-20"]
     df = run_experiment_for_tickers(cfg.tickers, trade_dates, cfg)
 
-    summary = df.groupby("system").apply(summarize_returns)
-    da = df.groupby("system").apply(directional_accuracy)
+    print(df[["system", "ticker", "trade_date", "action", "trade_executed", "raw_return"]])
+    print(df.groupby(["system", "action"]).size())
+
+    summary = df.groupby("system", group_keys=False).apply(summarize_returns)
+    da = df.groupby("system", group_keys=False).apply(directional_accuracy)
     print("Return summary by system:")
     print(summary)
     print("Directional accuracy by system:")

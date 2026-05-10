@@ -1,10 +1,12 @@
-# FinDynamicGraph Agent
+# FinDynamicGraph Agent v0.2.0
 Dissertation: Dynamic Evidence-Grounded Financial Knowledge Graph for Multi-Agent Simulated Trading
 
-## Goal
+## What is new in v0.2.0
 
-This project builds a dynamic financial knowledge graph as shared memory for a multi-agent trading decision-support system.
-Agents do not only exchange natural-language summaries; instead, they add, update, query, and verify graph evidence before generating buy / sell / hold / abstain decisions.
+- Neo4j relationship types are now written as real semantic edge types such as `HAS_SIGNAL` and `MENTIONED_IN` instead of a generic `REL` edge.
+- KG query logic is aligned with semantic relationship types.
+- Experiment logic is adjusted so the MVP can generate actual `buy` / `sell` actions instead of producing all-zero backtest output.
+- Debug prints are added to `main_experiment.py` so you can inspect action distribution and trade execution.
 
 ## Current Neo4j-oriented MVP scope
 
@@ -14,20 +16,9 @@ Agents do not only exchange natural-language summaries; instead, they add, updat
 - Evidence-grounded graph updates for technical signals and news mentions
 - Experiment pipeline for graph-based decisions vs baselines
 
-## Key files
-
-- `src/kg/schema.py` - graph schema models
-- `src/kg/store_neo4j.py` - Neo4j write layer
-- `src/kg/query.py` - Neo4j read layer
-- `src/kg/update_pipeline.py` - build graph batch from OHLCV/news
-- `src/main_collect.py` - collection and KG write entrypoint
-- `src/main_experiment.py` - experiment and backtest entrypoint
-
 ## Linux quick start
 
 ```bash
-unzip Multi_Agent_Trading_with_Dynamic_KG.zip
-cd Multi_Agent_Trading_with_Dynamic_KG
 python3 -m venv .venv-linux
 source .venv-linux/bin/activate
 pip install --upgrade pip
@@ -56,12 +47,6 @@ Run experiment:
 python -m src.main_experiment
 ```
 
-Outputs:
-
-- `data/raw/market_news/<ticker>/ohlcv_2021_2025.parquet`
-- `data/raw/market_news/<ticker>/news_latest.parquet`
-- `data/experiments/trades.parquet`
-
 ## Windows quick start
 
 ```cmd
@@ -75,8 +60,14 @@ python -m src.main_experiment
 
 Use the same `.env` values as above.
 
+## Outputs
+
+- `data/raw/market_news/<ticker>/ohlcv_2021_2025.parquet`
+- `data/raw/market_news/<ticker>/news_latest.parquet`
+- `data/experiments/trades.parquet`
+
 ## Notes
 
-- For local single-instance Neo4j, prefer `bolt://127.0.0.1:7687` instead of `neo4j://127.0.0.1:7687`.
-- `main_collect.py` degrades gracefully if Neo4j is unavailable, but then KG writes are skipped.
-- Yahoo Finance may rate-limit requests. A fallback chain is included: Yahoo chart API -> yfinance -> Stooq CSV.
+- For local single-instance Neo4j, prefer `bolt://127.0.0.1:7687`.
+- If Neo4j is unavailable, collection can still save raw files, but graph writes are skipped.
+<!-- - Yahoo Finance may rate-limit requests. Fallback chain is included: Yahoo chart API -> yfinance -> Stooq CSV. -->
