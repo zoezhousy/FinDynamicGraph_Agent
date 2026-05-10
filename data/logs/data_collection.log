@@ -286,3 +286,18 @@ Traceback (most recent call last):
     values[i] = one_value.encode('latin-1')
 UnicodeEncodeError: 'latin-1' codec can't encode characters in position 7-8: ordinal not in range(256)
 2026-05-05 15:17:16,288 | INFO | Done ticker=1299.HK
+2026-05-11 00:04:53,560 | INFO | Start collecting ticker=0005.HK
+2026-05-11 00:04:53,781 | INFO | Market data provider _download_yahoo_chart succeeded for 0005.HK
+2026-05-11 00:04:53,789 | INFO | Fetched OHLCV for 0005.HK with 1227 rows
+2026-05-11 00:04:56,322 | INFO | Fetched news for 0005.HK with 10 rows
+2026-05-11 00:05:00,216 | INFO | Done ticker=0005.HK
+2026-05-11 00:05:00,217 | INFO | Start collecting ticker=0700.HK
+2026-05-11 00:05:00,330 | INFO | Market data provider _download_yahoo_chart succeeded for 0700.HK
+2026-05-11 00:05:00,336 | INFO | Fetched OHLCV for 0700.HK with 1227 rows
+2026-05-11 00:05:02,456 | INFO | Fetched news for 0700.HK with 10 rows
+2026-05-11 00:05:04,666 | INFO | Done ticker=0700.HK
+2026-05-11 00:05:04,667 | INFO | Start collecting ticker=1299.HK
+2026-05-11 00:05:04,809 | INFO | Market data provider _download_yahoo_chart succeeded for 1299.HK
+2026-05-11 00:05:04,812 | INFO | Fetched OHLCV for 1299.HK with 1227 rows
+2026-05-11 00:05:06,590 | INFO | Fetched news for 1299.HK with 10 rows
+2026-05-11 00:05:09,591 | INFO | Done ticker=1299.HK

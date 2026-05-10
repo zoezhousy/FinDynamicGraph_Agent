@@ -4,12 +4,13 @@ numpy
 
 # data collection
 yfinance
+requests
 
 # news collection
 tavily-python
 
 # neo4j database
-# neo4j
+neo4j
 
 # graph store
 networkx
@@ -26,9 +27,3 @@ python-dotenv
 # testing
 pyyaml
 pytest
-
-# agents
-# src/agents/base_agent.py
-# src/agents/technical_agent.py
-# src/agents/fundamental_agent.py
-# src/agents/decision/graph_decision.py

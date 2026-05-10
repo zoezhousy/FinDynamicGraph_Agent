@@ -6,7 +6,7 @@ from typing import List
 @dataclass(frozen=True)
 class CollectionConfig:
     tickers: List[str] = field(
-        default_factory=lambda: ["0005.HK", "0700.HK", "0941.HK"]
+        default_factory=lambda: ["0005.HK", "0700.HK", "1299.HK"]
     )
     start_date: str = "2021-01-01"
     end_date: str = "2025-12-31"
@@ -21,3 +21,6 @@ class CollectionConfig:
     max_backoff_seconds: float = 16.0
     request_interval_seconds: float = 1.0
 
+    # Runtime behavior
+    market_data_provider: str = "yahoo"
+    neo4j_database: str = "neo4j"

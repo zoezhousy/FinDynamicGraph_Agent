@@ -19,15 +19,9 @@
 *.pyzwzwzw
 *.pyzwzwzwz 
 
-*/__pycache__
-*/.pytest_cache
+*/__pycache__/*
+*/.pytest_cache/*
 */.pytest_cache/*
 */.pytest_cache/*/*
-*/.pytest_cache/*/*/*
-*/.pytest_cache/*/*/*/*
-*/.pytest_cache/*/*/*/*/*
-*/.pytest_cache/*/*/*/*/*/*
-*/.pytest_cache/*/*/*/*/*/*/*
-*/.pytest_cache/*/*/*/*/*/*/*/*
-*/.pytest_cache/*/*/*/*/*/*/*/*/*
 
+*.pyc

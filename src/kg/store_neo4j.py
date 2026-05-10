@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
-from typing import Iterable, List
+from typing import Iterable
 
 from neo4j import GraphDatabase, basic_auth
 
@@ -20,52 +19,44 @@ class Neo4jKGStore:
         self._driver.close()
 
     def init_constraints(self) -> None:
-        """Create basic uniqueness constraints for ids."""
         cypher_statements = [
-            "CREATE CONSTRAINT company_id IF NOT EXISTS "
-            "FOR (c:Company) REQUIRE c.entity_id IS UNIQUE",
-            "CREATE CONSTRAINT indicator_id IF NOT EXISTS "
-            "FOR (i:IndicatorSignal) REQUIRE i.entity_id IS UNIQUE",
-            "CREATE CONSTRAINT news_id IF NOT EXISTS "
-            "FOR (n:NewsEvent) REQUIRE n.entity_id IS UNIQUE",
-            "CREATE CONSTRAINT risk_id IF NOT EXISTS "
-            "FOR (r:RiskEvent) REQUIRE r.entity_id IS UNIQUE",
-            "CREATE CONSTRAINT evidence_id IF NOT EXISTS "
-            "FOR (e:Evidence) REQUIRE e.evidence_id IS UNIQUE",
+            "CREATE CONSTRAINT company_id IF NOT EXISTS FOR (c:Company) REQUIRE c.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT indicator_id IF NOT EXISTS FOR (i:IndicatorSignal) REQUIRE i.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT news_id IF NOT EXISTS FOR (n:NewsEvent) REQUIRE n.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT risk_id IF NOT EXISTS FOR (r:RiskEvent) REQUIRE r.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.evidence_id IS UNIQUE",
         ]
         with self._driver.session(database=self._database) as session:
             for stmt in cypher_statements:
                 session.run(stmt)
 
     def upsert_entities(self, entities: Iterable[Entity]) -> None:
-        cypher = """
-        UNWIND $rows AS row
-        MERGE (e:EntityBase {entity_id: row.entity_id})
-        SET e:`${label}`  // placeholder, see below
-        """
-        # We cannot parameterize labels, so we send per-type batches.
-        by_label: dict[str, List[dict]] = {}
-        for e in entities:
-            props = {"entity_id": e.entity_id, **(e.properties or {})}
-            by_label.setdefault(e.type, []).append(props)
+        by_label: dict[str, list[dict]] = {}
+        for entity in entities:
+            props = {
+                "entity_id": entity.entity_id,
+                "entity_type": entity.type,
+                **(entity.properties or {}),
+            }
+            by_label.setdefault(entity.type, []).append(props)
 
         with self._driver.session(database=self._database) as session:
             for label, rows in by_label.items():
                 if not rows:
                     continue
-                q = f"""
+                query = f"""
                 UNWIND $rows AS row
                 MERGE (e:{label} {{entity_id: row.entity_id}})
                 SET e += row
                 """
-                session.run(q, rows=rows)
+                session.run(query, rows=rows)
 
     def upsert_evidences(self, evidences: Iterable[Evidence]) -> None:
         rows = []
-        for ev in evidences:
-            data = asdict(ev)
-            if data["published_time"] is not None:
-                data["published_time"] = data["published_time"].isoformat()
+        for evidence in evidences:
+            data = evidence.model_dump()
+            if data["published_at"] is not None:
+                data["published_at"] = data["published_at"].isoformat()
             rows.append(data)
 
         if not rows:
@@ -81,13 +72,11 @@ class Neo4jKGStore:
 
     def upsert_relations(self, relations: Iterable[Relation]) -> None:
         rows = []
-        for rel in relations:
-            data = asdict(rel)
-
+        for relation in relations:
+            data = relation.model_dump()
             for key in ("as_of_date", "valid_from", "valid_to"):
                 if data.get(key) is not None:
                     data[key] = data[key].isoformat()
-
             rows.append(data)
 
         if not rows:
@@ -97,7 +86,7 @@ class Neo4jKGStore:
         UNWIND $rows AS row
         MATCH (s {entity_id: row.start_id})
         MATCH (t {entity_id: row.end_id})
-        MERGE (s)-[r:REL {as_of_date: row.as_of_date, type: row.type}]->(t)
+        MERGE (s)-[r:REL {type: row.type, as_of_date: row.as_of_date}]->(t)
         SET r.confidence = row.confidence,
             r.direction = row.direction,
             r.valid_from = row.valid_from,
@@ -111,8 +100,7 @@ class Neo4jKGStore:
         try:
             with self._driver.session(database=self._database) as session:
                 result = session.run("RETURN 1 AS ok").single()
-                return bool(result["ok"] == 1)
+                return bool(result and result["ok"] == 1)
         except Exception as exc:
             logging.error("Neo4j health check failed: %s", exc)
             return False
-

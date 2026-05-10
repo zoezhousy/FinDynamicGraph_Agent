@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from neo4j import GraphDatabase, basic_auth
 
@@ -23,12 +22,12 @@ class KGQueryClient:
         as_of_date: datetime,
         max_news: int = 20,
         max_signals: int = 50,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         cypher = """
         MATCH (c:Company {ticker: $ticker})
-        OPTIONAL MATCH (c)-[r1:HAS_SIGNAL]->(s:IndicatorSignal)
+        OPTIONAL MATCH (c)-[r1:REL {type: 'HAS_SIGNAL'}]->(s:IndicatorSignal)
           WHERE datetime(r1.as_of_date) <= datetime($as_of)
-        OPTIONAL MATCH (c)-[r2:MENTIONED_IN]->(n:NewsEvent)
+        OPTIONAL MATCH (c)-[r2:REL {type: 'MENTIONED_IN'}]->(n:NewsEvent)
           WHERE datetime(r2.as_of_date) <= datetime($as_of)
         RETURN c,
                collect(DISTINCT s)[0..$max_signals] AS signals,
@@ -48,8 +47,7 @@ class KGQueryClient:
             signals = rec["signals"] or []
             news = rec["news"] or []
             return {
-                "company": [dict(company)],
-                "signals": [dict(n) for n in signals],
-                "news": [dict(n) for n in news],
+                "company": [dict(company)] if company else [],
+                "signals": [dict(node) for node in signals if node],
+                "news": [dict(node) for node in news if node],
             }
-

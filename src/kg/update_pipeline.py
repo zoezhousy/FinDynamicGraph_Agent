@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha1
 from typing import List, Tuple
 
 import pandas as pd
@@ -17,11 +18,10 @@ class KGBatch:
 
 
 def build_company_entity(ticker: str, name: str | None = None) -> Entity:
-    return Entity(
-        entity_id=f"company:{ticker}",
-        type="Company",
-        properties={"ticker": ticker, "name": name} if name else {"ticker": ticker},
-    )
+    properties = {"ticker": ticker}
+    if name:
+        properties["name"] = name
+    return Entity(entity_id=f"company:{ticker}", type="Company", properties=properties)
 
 
 def build_indicator_entities_from_ohlcv(
@@ -33,37 +33,40 @@ def build_indicator_entities_from_ohlcv(
     if "date" not in ohlcv.columns or "close" not in ohlcv.columns:
         raise ValueError("OHLCV frame must contain at least 'date' and 'close' columns.")
 
-    ohlcv = ohlcv.sort_values("date")
+    ohlcv = ohlcv.sort_values("date").reset_index(drop=True)
     close = ohlcv["close"].astype(float)
     ma20 = close.rolling(window=20, min_periods=20).mean()
 
     for idx, row in ohlcv.iterrows():
-        date = row["date"]
-        if pd.isna(ma20.loc[idx]):
+        date = _to_dt(row["date"])
+        if pd.isna(ma20.iloc[idx]):
             continue
 
         price = float(row["close"])
-        ma = float(ma20.loc[idx])
+        ma = float(ma20.iloc[idx])
         if price > ma * 1.01:
-            signal = "price_above_ma20"
+            signal_name = "price_above_ma20"
             direction = "bullish"
         elif price < ma * 0.99:
-            signal = "price_below_ma20"
+            signal_name = "price_below_ma20"
             direction = "bearish"
         else:
             continue
 
-        sig_id = f"signal:{ticker}:{signal}:{date}"
+        sig_id = f"signal:{ticker}:{signal_name}:{date.date().isoformat()}"
         entities.append(
             Entity(
                 entity_id=sig_id,
                 type="IndicatorSignal",
                 properties={
                     "ticker": ticker,
-                    "name": signal,
+                    "name": signal_name,
+                    "signal_type": "technical",
+                    "direction": direction,
+                    "strength": 0.7,
                     "price": price,
                     "ma20": ma,
-                    "as_of_date": str(date),
+                    "as_of_date": date.isoformat(),
                 },
             )
         )
@@ -72,10 +75,10 @@ def build_indicator_entities_from_ohlcv(
                 start_id=f"company:{ticker}",
                 end_id=sig_id,
                 type="HAS_SIGNAL",
-                as_of_date=_to_dt(date),
+                as_of_date=date,
                 confidence=0.7,
                 direction=direction,
-                valid_from=_to_dt(date),
+                valid_from=date,
                 valid_to=None,
                 evidence_ids=None,
             )
@@ -84,7 +87,9 @@ def build_indicator_entities_from_ohlcv(
     return entities, relations
 
 
-def build_news_from_frame(ticker: str, news: pd.DataFrame) -> Tuple[List[Entity], List[Evidence], List[Relation]]:
+def build_news_from_frame(
+    ticker: str, news: pd.DataFrame
+) -> Tuple[List[Entity], List[Evidence], List[Relation]]:
     entities: List[Entity] = []
     evidences: List[Evidence] = []
     relations: List[Relation] = []
@@ -100,34 +105,41 @@ def build_news_from_frame(ticker: str, news: pd.DataFrame) -> Tuple[List[Entity]
         seen_urls.add(url)
 
         pub_time_raw = row.get("published_time")
-        published_time = _parse_dt(pub_time_raw)
+        published_at = _parse_dt(pub_time_raw)
+        as_of_date = published_at or datetime.utcnow()
+        stable_hash = sha1(url.encode("utf-8")).hexdigest()[:16]
 
-        ev_id = f"news:{ticker}:{hash(url)}"
+        ev_id = f"news:{ticker}:{stable_hash}"
+        title = row.get("title")
+        content = row.get("content") or title or ""
         evidences.append(
             Evidence(
                 evidence_id=ev_id,
                 source_type="news",
+                source_name=row.get("source"),
                 url=url,
-                published_time=published_time,
-                snippet=(row.get("title") or "")[:512],
+                title=title,
+                published_at=published_at,
+                extracted_text=str(content)[:2000],
+                confidence=float(row.get("score") or 0.6),
             )
         )
 
-        news_ent_id = f"news_event:{ticker}:{hash(url)}"
+        news_ent_id = f"news_event:{ticker}:{stable_hash}"
         entities.append(
             Entity(
                 entity_id=news_ent_id,
                 type="NewsEvent",
                 properties={
                     "ticker": ticker,
-                    "title": row.get("title"),
+                    "title": title,
                     "source": row.get("source"),
                     "url": url,
+                    "published_at": published_at.isoformat() if published_at else None,
                 },
             )
         )
 
-        as_of_date = published_time or datetime.utcnow()
         relations.append(
             Relation(
                 start_id=f"company:{ticker}",
@@ -157,19 +169,18 @@ def build_kg_batch_for_ticker(
     return KGBatch(entities=entities, evidences=evidences, relations=relations)
 
 
-def _to_dt(value) -> datetime:
+def _to_dt(value: object) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value))
 
 
-def _parse_dt(value) -> datetime | None:
+def _parse_dt(value: object) -> datetime | None:
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
         return value
     try:
-        return datetime.fromisoformat(str(value))
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return None
-

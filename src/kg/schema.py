@@ -1,11 +1,8 @@
-# schema for the financial knowledge graph
-
-# In-memory graph for MVP
-# Neo4j for future development
-# 
+from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -20,23 +17,46 @@ SignalType = Literal[
 
 Direction = Literal["bullish", "bearish", "neutral", "uncertain"]
 Action = Literal["buy", "sell", "hold", "abstain"]
+EntityType = Literal[
+    "Company",
+    "IndicatorSignal",
+    "NewsEvent",
+    "FundamentalSignal",
+    "RiskEvent",
+    "Sector",
+    "Index",
+    "Event",
+]
+RelationType = Literal["HAS_SIGNAL", "MENTIONED_IN", "SUPPORTED_BY", "HAS_RISK", "RELATES_TO"]
 
 
 class Evidence(BaseModel):
     evidence_id: str
     source_type: str
-    source_name: Optional[str] = None
-    url: Optional[str] = None
-    title: Optional[str] = None
-    published_at: Optional[datetime] = None
-    extracted_text: str
+    source_name: str | None = None
+    url: str | None = None
+    title: str | None = None
+    published_at: datetime | None = None
+    extracted_text: str = ""
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-class FinancialEntity(BaseModel):
+class Entity(BaseModel):
     entity_id: str
-    name: str
-    entity_type: Literal["stock", "company", "index", "sector", "event"]
+    type: EntityType
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class Relation(BaseModel):
+    start_id: str
+    end_id: str
+    type: RelationType
+    as_of_date: datetime
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    direction: Direction | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    evidence_ids: list[str] | None = None
 
 
 class FinancialSignal(BaseModel):
@@ -46,7 +66,7 @@ class FinancialSignal(BaseModel):
     direction: Direction
     strength: float = Field(ge=0.0, le=1.0)
     valid_from: datetime
-    valid_to: Optional[datetime] = None
+    valid_to: datetime | None = None
     evidence_id: str
     description: str
 
