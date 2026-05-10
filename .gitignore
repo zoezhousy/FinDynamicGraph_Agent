@@ -6,3 +6,28 @@
 /.cursor
 
 
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.pyzwz
+*.pyzwzw
+*.pyzwzwz
+*.pyzwzwzw
+*.pyzwzwzwz 
+
+*/__pycache__
+*/.pytest_cache
+*/.pytest_cache/*
+*/.pytest_cache/*/*
+*/.pytest_cache/*/*/*
+*/.pytest_cache/*/*/*/*
+*/.pytest_cache/*/*/*/*/*
+*/.pytest_cache/*/*/*/*/*/*
+*/.pytest_cache/*/*/*/*/*/*/*
+*/.pytest_cache/*/*/*/*/*/*/*/*
+*/.pytest_cache/*/*/*/*/*/*/*/*/*
+

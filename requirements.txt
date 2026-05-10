@@ -1,5 +1,34 @@
+# data analysis
 pandas
-pyarrow
+numpy
+
+# data collection
 yfinance
+
+# news collection
 tavily-python
-neo4j
+
+# neo4j database
+# neo4j
+
+# graph store
+networkx
+
+# data storage 
+pyarrow
+
+# data validation
+pydantic
+
+# environment variables
+python-dotenv
+
+# testing
+pyyaml
+pytest
+
+# agents
+# src/agents/base_agent.py
+# src/agents/technical_agent.py
+# src/agents/fundamental_agent.py
+# src/agents/decision/graph_decision.py

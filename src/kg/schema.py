@@ -1,44 +1,67 @@
-from __future__ import annotations
+# schema for the financial knowledge graph
 
-from dataclasses import dataclass
+# In-memory graph for MVP
+# Neo4j for future development
+# 
+
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Literal, Optional
+from pydantic import BaseModel, Field
 
 
-EntityType = Literal["Company", "IndicatorSignal", "NewsEvent", "RiskEvent"]
-RelationType = Literal[
-    "HAS_SIGNAL",
-    "MENTIONED_IN",
-    "AFFECTS",
-    "CONTRADICTS",
+SignalType = Literal[
+    "technical",
+    "fundamental",
+    "news",
+    "risk",
+    "macro",
+    "sentiment",
 ]
 
+Direction = Literal["bullish", "bearish", "neutral", "uncertain"]
+Action = Literal["buy", "sell", "hold", "abstain"]
 
-@dataclass
-class Evidence:
+
+class Evidence(BaseModel):
     evidence_id: str
-    source_type: Literal["news", "price_signal"]
-    url: Optional[str]
-    published_time: Optional[datetime]
-    snippet: Optional[str]
+    source_type: str
+    source_name: Optional[str] = None
+    url: Optional[str] = None
+    title: Optional[str] = None
+    published_at: Optional[datetime] = None
+    extracted_text: str
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
-@dataclass
-class Entity:
+class FinancialEntity(BaseModel):
     entity_id: str
-    type: EntityType
-    properties: Dict[str, object]
+    name: str
+    entity_type: Literal["stock", "company", "index", "sector", "event"]
 
 
-@dataclass
-class Relation:
-    start_id: str
-    end_id: str
-    type: RelationType
-    as_of_date: datetime
-    confidence: float
-    direction: Optional[Literal["bullish", "bearish", "neutral"]] = None
-    valid_from: Optional[datetime] = None
+class FinancialSignal(BaseModel):
+    signal_id: str
+    ticker: str
+    signal_type: SignalType
+    direction: Direction
+    strength: float = Field(ge=0.0, le=1.0)
+    valid_from: datetime
     valid_to: Optional[datetime] = None
-    evidence_ids: Optional[List[str]] = None
+    evidence_id: str
+    description: str
 
+
+class GraphUpdate(BaseModel):
+    ticker: str
+    signal: FinancialSignal
+    evidence: Evidence
+
+
+class TradingDecision(BaseModel):
+    ticker: str
+    action: Action
+    bullish_score: float
+    bearish_score: float
+    neutral_score: float
+    evidence_ids: list[str]
+    reason: str
