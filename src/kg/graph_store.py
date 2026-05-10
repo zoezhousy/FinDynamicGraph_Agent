@@ -47,7 +47,10 @@ class GraphStore:
             relation_type="SUPPORTED_BY",
         )
 
-    def apply_update(self, update: GraphUpdate) -> None:
+    def apply_update(self, update: GraphUpdate | dict) -> None:
+        if isinstance(update, dict):
+            update = GraphUpdate.model_validate(update)
+
         self.add_evidence(update.evidence)
         self.add_signal(update.signal)
 
