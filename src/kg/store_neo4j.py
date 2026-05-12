@@ -39,6 +39,56 @@ class Neo4jKGStore:
             for stmt in cypher_statements:
                 session.run(stmt)
 
+    def clear_generated_data_for_ticker(self, ticker: str) -> None:
+        """
+        Delete generated graph data for one ticker before rebuilding.
+        Keeps Company nodes.
+        Deletes:
+        - IndicatorSignal
+        - NewsEvent
+        - Evidence with ticker-prefixed news ids
+        - FundamentalSignal
+        - RiskEvent
+        """
+        queries = [
+            """
+            MATCH (c:Company {ticker: $ticker})-[:HAS_SIGNAL]->(s:IndicatorSignal)
+            DETACH DELETE s
+            """,
+            """
+            MATCH (c:Company {ticker: $ticker})-[:MENTIONED_IN]->(n:NewsEvent)
+            DETACH DELETE n
+            """,
+            """
+            MATCH (e:Evidence)
+            WHERE e.evidence_id STARTS WITH ('news:' + $ticker + ':')
+            DETACH DELETE e
+            """,
+            """
+            MATCH (c:Company {ticker: $ticker})-[:HAS_SIGNAL]->(f:FundamentalSignal)
+            DETACH DELETE f
+            """,
+            """
+            MATCH (c:Company {ticker: $ticker})-[:HAS_RISK]->(r:RiskEvent)
+            DETACH DELETE r
+            """,
+        ]
+        with self._driver.session(database=self._database) as session:
+            for query in queries:
+                session.run(query, ticker=ticker)
+
+    def clear_all_generated_data(self) -> None:
+        queries = [
+            "MATCH (s:IndicatorSignal) DETACH DELETE s",
+            "MATCH (n:NewsEvent) DETACH DELETE n",
+            "MATCH (e:Evidence) DETACH DELETE e",
+            "MATCH (f:FundamentalSignal) DETACH DELETE f",
+            "MATCH (r:RiskEvent) DETACH DELETE r",
+        ]
+        with self._driver.session(database=self._database) as session:
+            for query in queries:
+                session.run(query)
+
     def upsert_entities(self, entities: Iterable[Entity]) -> None:
         by_label: dict[str, list[dict]] = {}
         for entity in entities:

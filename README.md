@@ -1,12 +1,7 @@
-# FinDynamicGraph Agent v0.2.0
+# FinDynamicGraph Agent
 Dissertation: Dynamic Evidence-Grounded Financial Knowledge Graph for Multi-Agent Simulated Trading
 
-## What is new in v0.2.0
-
-- Neo4j relationship types are now written as real semantic edge types such as `HAS_SIGNAL` and `MENTIONED_IN` instead of a generic `REL` edge.
-- KG query logic is aligned with semantic relationship types.
-- Experiment logic is adjusted so the MVP can generate actual `buy` / `sell` actions instead of producing all-zero backtest output.
-- Debug prints are added to `main_experiment.py` so you can inspect action distribution and trade execution.
+### Milestone 1 finished
 
 ## Current Neo4j-oriented MVP scope
 
@@ -71,3 +66,29 @@ Use the same `.env` values as above.
 - For local single-instance Neo4j, prefer `bolt://127.0.0.1:7687`.
 - If Neo4j is unavailable, collection can still save raw files, but graph writes are skipped.
 <!-- - Yahoo Finance may rate-limit requests. Fallback chain is included: Yahoo chart API -> yfinance -> Stooq CSV. -->
+
+## Current Scope of the MVP
+
+### Deliverables: 
+- raw collected data under data/raw/...
+- Neo4j graph with queryable nodes and relationships
+- experiment output file data/experiments/trades.parquet
+- runnable collection and experiment logs
+
+the system supports:
+
+- 3 Hong Kong stock tickers
+- OHLCV market data ingestion
+- Tavily news collection
+- technical signal generation
+- basic graph updates
+- basic graph querying
+- initial multi-agent decision generation
+- initial backtest execution
+
+
+## Current Limitation 
+1. KG still relatively thin and currently dominated by technical signal nodes. 
+2. Evidence grounding mechanism is in inital level, but graph does not yet fully presented in all intended source -> claim -> decision chain
+3. The current decision logic is still simple
+

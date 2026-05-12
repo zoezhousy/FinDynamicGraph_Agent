@@ -14,13 +14,15 @@ class CollectionConfig:
     output_root: Path = Path("data/raw/market_news")
     log_file: Path = Path("data/logs/data_collection.log")
 
-    # Retry and rate limit controls
     max_retries: int = 4
     initial_backoff_seconds: float = 1.0
     backoff_multiplier: float = 2.0
     max_backoff_seconds: float = 16.0
     request_interval_seconds: float = 1.0
 
-    # Runtime behavior
     market_data_provider: str = "yahoo"
     neo4j_database: str = "neo4j"
+
+    llm_api_base: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""

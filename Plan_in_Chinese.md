@@ -7,7 +7,7 @@
     - 修复 main_collect.py
     - 修复 main_experiment.py
     - 跑通：
-        - Yahoo Finance OHLCV, Tavily news, KG 写入, KG 查询, decision, backtest
+        - Yahoo Finance OHLCV, technical indicators, Tavily news, KG 写入, KG 查询, decision, backtest
 
 - 交付物
     - data/raw/... 原始数据
@@ -20,7 +20,7 @@
     - 不靠手工 patch
     - 输出决策和收益结果
 
-───
+---
 
 ## Milestone 2，补齐 dissertation 最小研究系统
 
@@ -44,7 +44,7 @@
   - 每次决策都能追溯到 KG 中的 signals/evidence
   - technical/news/fundamental/risk 都参与决策
 
-───
+--- 
 
 ## Milestone 3，做真 dynamic KG
 
@@ -54,32 +54,29 @@
   - 给 signal/evidence 加时间有效性
   - 实现新旧信息并存
   - query 按 as_of_date 过滤
-• 显式记录冲突信号
-• 区分 static KG 和 dynamic KG 路径
+  -  显式记录冲突信号
+  -  区分 static KG 和 dynamic KG 路径
 
-交付物
+- 交付物
+  - dynamic update 逻辑
+  - static vs dynamic 两套实验入口
+  - 冲突案例样本
 
-• dynamic update 逻辑
-• static vs dynamic 两套实验入口
-• 冲突案例样本
+- 完成标准
+  - 能证明同一 ticker 在不同日期看到的 graph state 不同
+  - 能比较 static KG 和 dynamic KG
 
-完成标准
+---
 
-• 能证明同一 ticker 在不同日期看到的 graph state 不同
-• 能比较 static KG 和 dynamic KG
+## Milestone 4，补 baseline 和 evaluation
 
-───
+- 目标：形成论文核心实验
 
-Milestone 4，补 baseline 和 evaluation
-
-目标：形成论文核心实验
-
-要做
-
-• 做 3 个 baseline
-  • no KG no evidence
-  • evidence no KG
-  • static KG
+- 要做
+  - 做 3 个 baseline
+    - no KG no evidence
+    - evidence no KG
+    - static KG
 • 跑 proposed system
 • 输出评价指标
   • directional accuracy
@@ -100,7 +97,7 @@ Milestone 4，补 baseline 和 evaluation
 • 能回答 “为什么 KG 更好”
 • 能写进 results / evaluation 章节
 
-───
+---
 
 Milestone 5，论文材料化
 

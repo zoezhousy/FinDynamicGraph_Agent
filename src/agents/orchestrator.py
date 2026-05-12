@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict
 
+from src.agents.fundamental_agent import FundamentalAgent
 from src.agents.kg_tools import KGAgentContext
+from src.agents.risk_agent import RiskAgent
 from src.agents.roles import (
     AgentReport,
     news_agent,
@@ -20,22 +22,28 @@ class OrchestratorConfig:
 
 
 class KGBasedOrchestrator:
-    """Simplified KG-driven multi-agent orchestrator.
-
-    1. 从 KG 读取子图（公司 + 技术信号 + 新闻）
-    2. 调用不同角色的 agent 生成报告
-    3. 由 Portfolio Manager 聚合为结构化决策
-    """
+    """KG-driven multi-agent orchestrator for Milestone 2."""
 
     def __init__(self, kg_context: KGAgentContext, config: OrchestratorConfig | None = None) -> None:
         self.kg_context = kg_context
         self.config = config or OrchestratorConfig()
+        self.fundamental_agent_runner = FundamentalAgent()
+        self.risk_agent_runner = RiskAgent()
 
     def run_for_ticker(self, ticker: str, trade_date: datetime) -> Dict[str, Any]:
         subgraph = self.kg_context.load_subgraph(ticker, trade_date)
         reports: list[AgentReport] = []
-        reports.append(news_agent(subgraph))
-        reports.append(technical_agent(subgraph))
+        reports.append(news_agent(subgraph, ticker, trade_date))
+        reports.append(technical_agent(subgraph, ticker, trade_date))
+        reports.append(
+            self.fundamental_agent_runner.run(
+                {"ticker": ticker, "trade_date": trade_date, "subgraph": subgraph}
+            )
+        )
+        reports.append(
+            self.risk_agent_runner.run(
+                {"ticker": ticker, "trade_date": trade_date, "subgraph": subgraph}
+            )
+        )
         decision = portfolio_manager_decide(ticker, trade_date, reports)
         return decision
-
