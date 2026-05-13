@@ -19,6 +19,8 @@ from src.eval.baselines import (
 from src.eval.metrics import directional_accuracy, summarize_returns
 from src.kg.query import KGQueryClient
 from src.sim.backtest import BacktestConfig, compute_trade_return
+from src.kg.schema import BacktestOutcome
+from src.kg.store_neo4j import Neo4jKGStore
 
 def load_ohlcv_from_disk(root: Path, ticker: str) -> pd.DataFrame:
     path = root / ticker / "ohlcv_2021_2025.parquet"
@@ -46,6 +48,61 @@ def generate_trade_dates(
 
     return [d.strftime("%Y-%m-%d") for d in dates]
 
+def build_backtest_outcome(
+    ticker: str,
+    trade_dt: datetime,
+    action: str,
+    kg_decision: dict,
+    bt_res: dict,
+    bt_cfg: BacktestConfig,
+) -> BacktestOutcome:
+    decision_id = kg_decision.get("decision_trace", {}).get(
+        "decision_id",
+        f"decision:{ticker}:{trade_dt.date().isoformat()}",
+    )
+    outcome_id = f"outcome:{ticker}:{trade_dt.date().isoformat()}:kg_dynamic"
+
+    raw_return = float(bt_res.get("raw_return") or 0.0)
+    trade_executed = bool(bt_res.get("trade_executed"))
+
+    if not trade_executed:
+        direction_outcome = "not_executed"
+        is_profitable = None
+    elif raw_return > 0:
+        direction_outcome = "correct"
+        is_profitable = True
+    elif raw_return < 0:
+        direction_outcome = "incorrect"
+        is_profitable = False
+    else:
+        direction_outcome = "flat"
+        is_profitable = False
+
+    return BacktestOutcome(
+        outcome_id=outcome_id,
+        decision_id=decision_id,
+        ticker=ticker,
+        trade_date=trade_dt,
+        action=action,
+        system="kg_dynamic",
+        raw_return=raw_return,
+        holding_days=int(bt_res.get("holding_days") or 0),
+        trade_executed=trade_executed,
+        direction_outcome=direction_outcome,
+        is_profitable=is_profitable,
+        transaction_cost_bp=bt_cfg.transaction_cost_bp,
+        metadata={
+            "decision_action": action,
+            "final_score": kg_decision.get("final_score"),
+            "confidence": kg_decision.get("confidence"),
+            "conflict_level": kg_decision.get("conflict_level"),
+            "entry_date": bt_res.get("entry_date"),
+            "exit_date": bt_res.get("exit_date"),
+            "entry_price": bt_res.get("entry_price"),
+            "exit_price": bt_res.get("exit_price"),
+        },
+    )
+
 def run_experiment_for_tickers(
     tickers: List[str],
     trade_dates: List[str],
@@ -63,6 +120,15 @@ def run_experiment_for_tickers(
         neo4j_password,
         database=config.neo4j_database,
     )
+
+    kg_store = Neo4jKGStore(
+        neo4j_uri,
+        neo4j_user,
+        neo4j_password,
+        database=config.neo4j_database,
+    )
+    kg_store.init_constraints()
+
     kg_ctx = KGAgentContext(kg_client)
     orchestrator = KGBasedOrchestrator(kg_ctx)
 
@@ -79,7 +145,29 @@ def run_experiment_for_tickers(
                 # KG dynamic system
                 kg_decision = orchestrator.run_for_ticker(ticker, trade_dt)
                 bt_res = compute_trade_return(ohlcv, trade_date_str, kg_decision["action"], bt_cfg)
-                results_rows.append({**kg_decision, **bt_res, "system": "kg_dynamic"})
+
+                outcome = build_backtest_outcome(
+                    ticker=ticker,
+                    trade_dt=trade_dt,
+                    action=kg_decision["action"],
+                    kg_decision=kg_decision,
+                    bt_res=bt_res,
+                    bt_cfg=bt_cfg,
+                )
+                kg_store.upsert_backtest_outcome(outcome)
+
+                results_rows.append(
+                    {
+                        **kg_decision,
+                        **bt_res,
+                        "system": "kg_dynamic",
+                        "outcome_id": outcome.outcome_id,
+                        "direction_outcome": outcome.direction_outcome,
+                        "is_profitable": outcome.is_profitable,
+                    }
+                )    
+
+
 
                 # Baselines
                 for baseline_fn in (
@@ -99,6 +187,8 @@ def run_experiment_for_tickers(
                     )
     finally:
         kg_client.close()
+        kg_store.close()
+        orchestrator.close()
 
     df = pd.DataFrame(results_rows)
 

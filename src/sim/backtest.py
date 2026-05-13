@@ -40,7 +40,15 @@ def compute_trade_return(
     elif action == "sell":
         gross = (entry_price - exit_price) / entry_price
     else:
-        return {"raw_return": 0.0, "holding_days": 0, "trade_executed": False}
+        return {
+            "raw_return": 0.0,
+            "holding_days": 0,
+            "trade_executed": False,
+            "entry_date": None,
+            "exit_date": None,
+            "entry_price": None,
+            "exit_price": None,
+        }
 
     cost = 2 * cfg.transaction_cost_bp / 10000.0
     net = gross - cost
@@ -48,5 +56,9 @@ def compute_trade_return(
         "raw_return": net,
         "holding_days": int(exit_idx - entry_idx + 1),
         "trade_executed": True,
+        "entry_date": frame.loc[entry_idx, "date"].date().isoformat(),
+        "exit_date": frame.loc[exit_idx, "date"].date().isoformat(),
+        "entry_price": entry_price,
+        "exit_price": exit_price,
     }
 

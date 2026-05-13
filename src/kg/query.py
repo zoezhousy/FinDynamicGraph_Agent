@@ -130,6 +130,7 @@ class KGQueryClient:
         OPTIONAL MATCH (d)-[:USES_EVIDENCE]->(de)
         OPTIONAL MATCH (src:SourceDocument)-[:CONTAINS_EVIDENCE]->(de)
         OPTIONAL MATCH (de)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(cl:Claim)
+        OPTIONAL MATCH (d)-[:HAS_OUTCOME]->(bo:BacktestOutcome)
         OPTIONAL MATCH (d)-[:FOR_COMPANY]->(c:Company)
 
         RETURN d, c,
@@ -137,7 +138,8 @@ class KGQueryClient:
             collect(DISTINCT ae) AS assessment_evidence,
             collect(DISTINCT de) AS decision_evidence,
             collect(DISTINCT src) AS sources,
-            collect(DISTINCT cl) AS claims
+            collect(DISTINCT cl) AS claims,
+            collect(DISTINCT bo) AS outcomes
         """
 
         with self._driver.session(database=self._database) as session:
@@ -154,4 +156,22 @@ class KGQueryClient:
                 "decision_evidence": [dict(x) for x in (rec["decision_evidence"] or []) if x],
                 "sources": [dict(x) for x in (rec["sources"] or []) if x],
                 "claims": [dict(x) for x in (rec["claims"] or []) if x],
+            }
+    
+    def get_backtest_outcome(self, outcome_id: str) -> dict[str, Any] | None:
+        cypher = """
+        MATCH (b:BacktestOutcome {entity_id: $outcome_id})
+        OPTIONAL MATCH (d:DecisionTrace)-[:HAS_OUTCOME]->(b)
+        RETURN b, d
+        """
+
+        with self._driver.session(database=self._database) as session:
+            rec = session.run(cypher, outcome_id=outcome_id).single()
+
+            if not rec:
+                return None
+
+            return {
+                "outcome": dict(rec["b"]) if rec["b"] else None,
+                "decision": dict(rec["d"]) if rec["d"] else None,
             }

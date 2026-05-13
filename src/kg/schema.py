@@ -17,6 +17,7 @@ SignalType = Literal[
 
 Direction = Literal["bullish", "bearish", "neutral", "uncertain"]
 Action = Literal["buy", "sell", "hold", "abstain"]
+OutcomeDirection = Literal["correct", "incorrect", "flat", "not_executed", "unknown"]
 ClaimPolarity = Literal["supports", "contradicts", "neutral", "unknown"]
 
 EntityType = Literal[
@@ -33,6 +34,7 @@ EntityType = Literal[
     "Agent",
     "DecisionTrace",
     "AgentAssessment",
+    "BacktestOutcome",
 ]
 
 RelationType = Literal[
@@ -51,6 +53,7 @@ RelationType = Literal[
     "SUPPORTS_CLAIM",
     "CONTRADICTS_CLAIM",
     "CLAIM_USED_BY",
+    "HAS_OUTCOME",
 ]
 
 
@@ -167,7 +170,27 @@ class DecisionTrace(BaseModel):
     evidence_alignment: str = "unknown"
     trace: dict[str, Any] = Field(default_factory=dict)
 
+class BacktestOutcome(BaseModel):
+    outcome_id: str
+    decision_id: str
+    ticker: str
+    trade_date: datetime
+    action: Action
+    system: str = "kg_dynamic"
 
+    raw_return: float = 0.0
+    holding_days: int = 0
+    trade_executed: bool = False
+
+    direction_outcome: OutcomeDirection = "unknown"
+    is_profitable: bool | None = None
+
+    transaction_cost_bp: float | None = None
+    evaluated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    
 class TradingDecision(BaseModel):
     ticker: str
     action: Action

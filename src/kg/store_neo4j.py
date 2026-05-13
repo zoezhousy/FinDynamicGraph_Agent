@@ -6,7 +6,7 @@ from typing import Iterable
 
 from neo4j import GraphDatabase, basic_auth
 
-from src.kg.schema import AgentAssessment, DecisionTrace, Entity, Evidence, Relation
+from src.kg.schema import AgentAssessment, BacktestOutcome, DecisionTrace, Entity, Evidence, Relation
 
 
 _ALLOWED_REL_TYPES = {
@@ -25,6 +25,7 @@ _ALLOWED_REL_TYPES = {
     "SUPPORTS_CLAIM",
     "CONTRADICTS_CLAIM",
     "CLAIM_USED_BY",
+    "HAS_OUTCOME",
 }
 
 
@@ -51,6 +52,7 @@ class Neo4jKGStore:
             "CREATE CONSTRAINT agent_id IF NOT EXISTS FOR (a:Agent) REQUIRE a.entity_id IS UNIQUE",
             "CREATE CONSTRAINT decision_trace_id IF NOT EXISTS FOR (d:DecisionTrace) REQUIRE d.entity_id IS UNIQUE",
             "CREATE CONSTRAINT assessment_id IF NOT EXISTS FOR (aa:AgentAssessment) REQUIRE aa.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT backtest_outcome_id IF NOT EXISTS FOR (b:BacktestOutcome) REQUIRE b.entity_id IS UNIQUE",
         ]
         with self._driver.session(database=self._database) as session:
             for stmt in cypher_statements:
@@ -97,6 +99,10 @@ class Neo4jKGStore:
             MATCH (aa:AgentAssessment {ticker: $ticker})
             DETACH DELETE aa
             """,
+            """
+            MATCH (b:BacktestOutcome {ticker: $ticker})
+            DETACH DELETE b
+            """,
         ]
         with self._driver.session(database=self._database) as session:
             for query in queries:
@@ -113,6 +119,7 @@ class Neo4jKGStore:
             "MATCH (r:RiskEvent) DETACH DELETE r",
             "MATCH (d:DecisionTrace) DETACH DELETE d",
             "MATCH (aa:AgentAssessment) DETACH DELETE aa",
+            "MATCH (b:BacktestOutcome) DETACH DELETE b",
             "MATCH (a:Agent) DETACH DELETE a",
         ]
         with self._driver.session(database=self._database) as session:
@@ -303,6 +310,48 @@ class Neo4jKGStore:
                 decision_id=trace.decision_id,
                 evidence_ids=trace.evidence_ids,
                 trade_date=trace.trade_date.isoformat(),
+            )
+
+    def upsert_backtest_outcome(self, outcome: BacktestOutcome) -> None:
+        row = outcome.model_dump()
+
+        row["trade_date"] = outcome.trade_date.isoformat()
+        row["evaluated_at"] = outcome.evaluated_at.isoformat()
+        row["metadata_json"] = json.dumps(row.pop("metadata", {}), ensure_ascii=False)
+
+        props = {
+            "entity_id": outcome.outcome_id,
+            "entity_type": "BacktestOutcome",
+            **row,
+        }
+
+        with self._driver.session(database=self._database) as session:
+            session.run(
+                """
+                MERGE (b:BacktestOutcome {entity_id: $entity_id})
+                SET b += $props
+                """,
+                entity_id=outcome.outcome_id,
+                props=props,
+            )
+
+            session.run(
+                """
+                MATCH (d:DecisionTrace {entity_id: $decision_id})
+                MATCH (b:BacktestOutcome {entity_id: $outcome_id})
+                MERGE (d)-[r:HAS_OUTCOME {as_of_date: $trade_date}]->(b)
+                SET r.system = $system,
+                    r.raw_return = $raw_return,
+                    r.trade_executed = $trade_executed,
+                    r.direction_outcome = $direction_outcome
+                """,
+                decision_id=outcome.decision_id,
+                outcome_id=outcome.outcome_id,
+                trade_date=outcome.trade_date.isoformat(),
+                system=outcome.system,
+                raw_return=outcome.raw_return,
+                trade_executed=outcome.trade_executed,
+                direction_outcome=outcome.direction_outcome,
             )
 
     def health_check(self) -> bool:
