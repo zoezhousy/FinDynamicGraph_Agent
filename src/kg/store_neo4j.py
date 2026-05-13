@@ -21,6 +21,10 @@ _ALLOWED_REL_TYPES = {
     "SUPPORTS_DECISION",
     "OPPOSES_DECISION",
     "USES_EVIDENCE",
+    "CONTAINS_EVIDENCE",
+    "SUPPORTS_CLAIM",
+    "CONTRADICTS_CLAIM",
+    "CLAIM_USED_BY",
 }
 
 
@@ -40,7 +44,10 @@ class Neo4jKGStore:
             "CREATE CONSTRAINT indicator_id IF NOT EXISTS FOR (i:IndicatorSignal) REQUIRE i.entity_id IS UNIQUE",
             "CREATE CONSTRAINT news_id IF NOT EXISTS FOR (n:NewsEvent) REQUIRE n.entity_id IS UNIQUE",
             "CREATE CONSTRAINT risk_id IF NOT EXISTS FOR (r:RiskEvent) REQUIRE r.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT source_doc_id IF NOT EXISTS FOR (s:SourceDocument) REQUIRE s.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT claim_id IF NOT EXISTS FOR (c:Claim) REQUIRE c.entity_id IS UNIQUE",
             "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.evidence_id IS UNIQUE",
+            "CREATE CONSTRAINT evidence_entity_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.entity_id IS UNIQUE",
             "CREATE CONSTRAINT agent_id IF NOT EXISTS FOR (a:Agent) REQUIRE a.entity_id IS UNIQUE",
             "CREATE CONSTRAINT decision_trace_id IF NOT EXISTS FOR (d:DecisionTrace) REQUIRE d.entity_id IS UNIQUE",
             "CREATE CONSTRAINT assessment_id IF NOT EXISTS FOR (aa:AgentAssessment) REQUIRE aa.entity_id IS UNIQUE",
@@ -58,6 +65,16 @@ class Neo4jKGStore:
             """
             MATCH (c:Company {ticker: $ticker})-[:MENTIONED_IN]->(n:NewsEvent)
             DETACH DELETE n
+            """,
+            """
+            MATCH (src:SourceDocument)
+            WHERE src.entity_id STARTS WITH ('source:news:' + $ticker + ':')
+            DETACH DELETE src
+            """,
+            """
+            MATCH (cl:Claim)
+            WHERE cl.entity_id STARTS WITH ('claim:news:' + $ticker + ':')
+            DETACH DELETE cl
             """,
             """
             MATCH (e:Evidence)
@@ -89,6 +106,8 @@ class Neo4jKGStore:
         queries = [
             "MATCH (s:IndicatorSignal) DETACH DELETE s",
             "MATCH (n:NewsEvent) DETACH DELETE n",
+            "MATCH (src:SourceDocument) DETACH DELETE src",
+            "MATCH (cl:Claim) DETACH DELETE cl",
             "MATCH (e:Evidence) DETACH DELETE e",
             "MATCH (f:FundamentalSignal) DETACH DELETE f",
             "MATCH (r:RiskEvent) DETACH DELETE r",
@@ -127,6 +146,11 @@ class Neo4jKGStore:
             data = evidence.model_dump()
             if data["published_at"] is not None:
                 data["published_at"] = data["published_at"].isoformat()
+
+            # Important: make Evidence compatible with generic Relation matching.
+            data["entity_id"] = evidence.evidence_id
+            data["entity_type"] = "Evidence"
+
             rows.append(data)
 
         if not rows:

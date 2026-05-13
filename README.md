@@ -28,6 +28,11 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password
 NEO4J_DATABASE=neo4j
 TAVILY_API_KEY=your_key
+LLM_API_BASE=your_llm_api_base
+LLM_API_KEY=your_key
+LLM_MODEL=your_model_name
+LLM_TIMEOUT_SECONDS=60
+LLM_TEMPERATURE=0.2
 ```
 
 Run collection:
@@ -57,7 +62,7 @@ Use the same `.env` values as above.
 
 ## Outputs
 
-- `data/raw/market_news/<ticker>/ohlcv_2021_2025.parquet`
+- `data/raw/market_news/<ticker>/ohlcv_2021_now.parquet`
 - `data/raw/market_news/<ticker>/news_latest.parquet`
 - `data/experiments/trades.parquet`
 

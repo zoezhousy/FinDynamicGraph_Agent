@@ -33,23 +33,29 @@ class KGQueryClient:
 
         OPTIONAL MATCH (c)-[r1:HAS_SIGNAL]->(s:IndicatorSignal)
         WHERE datetime(r1.as_of_date) <= datetime($as_of)
-          AND datetime(r1.as_of_date) >= datetime($signal_from)
+        AND datetime(r1.as_of_date) >= datetime($signal_from)
 
         OPTIONAL MATCH (c)-[r2:MENTIONED_IN]->(n:NewsEvent)
         WHERE datetime(r2.as_of_date) <= datetime($as_of)
-          AND datetime(r2.as_of_date) >= datetime($news_from)
+        AND datetime(r2.as_of_date) >= datetime($news_from)
 
         OPTIONAL MATCH (n)-[:SUPPORTED_BY]->(e:Evidence)
+        OPTIONAL MATCH (src:SourceDocument)-[:CONTAINS_EVIDENCE]->(e)
+        OPTIONAL MATCH (e)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(cl:Claim)
 
         WITH c,
-             [x IN collect(DISTINCT s) WHERE x IS NOT NULL] AS raw_signals,
-             [x IN collect(DISTINCT n) WHERE x IS NOT NULL] AS raw_news,
-             [x IN collect(DISTINCT e) WHERE x IS NOT NULL] AS raw_evidences
+            [x IN collect(DISTINCT s) WHERE x IS NOT NULL] AS raw_signals,
+            [x IN collect(DISTINCT n) WHERE x IS NOT NULL] AS raw_news,
+            [x IN collect(DISTINCT e) WHERE x IS NOT NULL] AS raw_evidences,
+            [x IN collect(DISTINCT src) WHERE x IS NOT NULL] AS raw_sources,
+            [x IN collect(DISTINCT cl) WHERE x IS NOT NULL] AS raw_claims
 
         RETURN c,
-               raw_signals[0..$max_signals] AS signals,
-               raw_news[0..$max_news] AS news,
-               raw_evidences AS evidences
+            raw_signals[0..$max_signals] AS signals,
+            raw_news[0..$max_news] AS news,
+            raw_evidences AS evidences,
+            raw_sources AS sources,
+            raw_claims AS claims
         """
 
         with self._driver.session(database=self._database) as session:
@@ -64,16 +70,27 @@ class KGQueryClient:
             ).single()
 
             if not rec:
-                return {"company": [], "signals": [], "news": [], "evidences": []}
+                return {
+                    "company": [],
+                    "signals": [],
+                    "news": [],
+                    "evidences": [],
+                    "sources": [],
+                    "claims": [],
+                }
 
             company = rec["c"]
             signals = rec["signals"] or []
             news = rec["news"] or []
             evidences = rec["evidences"] or []
+            sources = rec["sources"] or []
+            claims = rec["claims"] or []
 
             signal_rows = [dict(node) for node in signals if node]
             news_rows = [dict(node) for node in news if node]
             evidence_rows = [dict(node) for node in evidences if node]
+            source_rows = [dict(node) for node in sources if node]
+            claim_rows = [dict(node) for node in claims if node]
 
             def signal_sort_key(x: dict[str, Any]) -> str:
                 return str(x.get("as_of_date") or "")
@@ -84,15 +101,25 @@ class KGQueryClient:
             def evidence_sort_key(x: dict[str, Any]) -> str:
                 return str(x.get("published_at") or "")
 
+            def source_sort_key(x: dict[str, Any]) -> str:
+                return str(x.get("published_at") or "")
+
+            def claim_sort_key(x: dict[str, Any]) -> str:
+                return str(x.get("as_of_date") or "")
+
             signal_rows = sorted(signal_rows, key=signal_sort_key, reverse=True)[:max_signals]
             news_rows = sorted(news_rows, key=news_sort_key, reverse=True)[:max_news]
             evidence_rows = sorted(evidence_rows, key=evidence_sort_key, reverse=True)
+            source_rows = sorted(source_rows, key=source_sort_key, reverse=True)
+            claim_rows = sorted(claim_rows, key=claim_sort_key, reverse=True)
 
             return {
                 "company": [dict(company)] if company else [],
                 "signals": signal_rows,
                 "news": news_rows,
                 "evidences": evidence_rows,
+                "sources": source_rows,
+                "claims": claim_rows,
             }
 
     def get_decision_trace(self, decision_id: str) -> dict[str, Any] | None:
@@ -101,20 +128,30 @@ class KGQueryClient:
         OPTIONAL MATCH (d)-[:HAS_ASSESSMENT]->(aa:AgentAssessment)
         OPTIONAL MATCH (aa)-[:USES_EVIDENCE]->(ae)
         OPTIONAL MATCH (d)-[:USES_EVIDENCE]->(de)
+        OPTIONAL MATCH (src:SourceDocument)-[:CONTAINS_EVIDENCE]->(de)
+        OPTIONAL MATCH (de)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(cl:Claim)
         OPTIONAL MATCH (d)-[:FOR_COMPANY]->(c:Company)
+
         RETURN d, c,
-               collect(DISTINCT aa) AS assessments,
-               collect(DISTINCT ae) AS assessment_evidence,
-               collect(DISTINCT de) AS decision_evidence
+            collect(DISTINCT aa) AS assessments,
+            collect(DISTINCT ae) AS assessment_evidence,
+            collect(DISTINCT de) AS decision_evidence,
+            collect(DISTINCT src) AS sources,
+            collect(DISTINCT cl) AS claims
         """
+
         with self._driver.session(database=self._database) as session:
             rec = session.run(cypher, decision_id=decision_id).single()
+
             if not rec:
                 return None
+
             return {
                 "decision": dict(rec["d"]) if rec["d"] else None,
                 "company": dict(rec["c"]) if rec["c"] else None,
                 "assessments": [dict(x) for x in (rec["assessments"] or []) if x],
                 "assessment_evidence": [dict(x) for x in (rec["assessment_evidence"] or []) if x],
                 "decision_evidence": [dict(x) for x in (rec["decision_evidence"] or []) if x],
+                "sources": [dict(x) for x in (rec["sources"] or []) if x],
+                "claims": [dict(x) for x in (rec["claims"] or []) if x],
             }

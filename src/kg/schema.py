@@ -17,6 +17,8 @@ SignalType = Literal[
 
 Direction = Literal["bullish", "bearish", "neutral", "uncertain"]
 Action = Literal["buy", "sell", "hold", "abstain"]
+ClaimPolarity = Literal["supports", "contradicts", "neutral", "unknown"]
+
 EntityType = Literal[
     "Company",
     "IndicatorSignal",
@@ -26,10 +28,13 @@ EntityType = Literal[
     "Sector",
     "Index",
     "Event",
+    "SourceDocument",
+    "Claim",
     "Agent",
     "DecisionTrace",
     "AgentAssessment",
 ]
+
 RelationType = Literal[
     "HAS_SIGNAL",
     "MENTIONED_IN",
@@ -42,7 +47,25 @@ RelationType = Literal[
     "SUPPORTS_DECISION",
     "OPPOSES_DECISION",
     "USES_EVIDENCE",
+    "CONTAINS_EVIDENCE",
+    "SUPPORTS_CLAIM",
+    "CONTRADICTS_CLAIM",
+    "CLAIM_USED_BY",
 ]
+
+
+class SourceDocument(BaseModel):
+    """Original document or URL from which evidence was extracted."""
+
+    source_id: str
+    source_type: str
+    source_name: str | None = None
+    url: str | None = None
+    title: str | None = None
+    published_at: datetime | None = None
+    retrieved_at: datetime | None = None
+    content_hash: str | None = None
+    raw_text_preview: str = ""
 
 
 class Evidence(BaseModel):
@@ -54,6 +77,21 @@ class Evidence(BaseModel):
     published_at: datetime | None = None
     extracted_text: str = ""
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+class Claim(BaseModel):
+    """Atomic, evidence-grounded statement used by agents and decisions."""
+
+    claim_id: str
+    ticker: str
+    claim_type: SignalType
+    text: str
+    polarity: ClaimPolarity = "unknown"
+    confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    as_of_date: datetime
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class Entity(BaseModel):
@@ -102,6 +140,7 @@ class AgentAssessment(BaseModel):
     score: float = Field(ge=-1.0, le=1.0)
     summary: str
     evidence_refs: list[str] = Field(default_factory=list)
+    claim_refs: list[str] = Field(default_factory=list)
     factors: list[dict[str, Any]] = Field(default_factory=list)
     supports_decision: bool | None = None
     opposes_decision: bool | None = None
@@ -120,6 +159,7 @@ class DecisionTrace(BaseModel):
     bearish_support_count: int = 0
     neutral_support_count: int = 0
     evidence_ids: list[str] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
     supporting_roles: list[str] = Field(default_factory=list)
     opposing_roles: list[str] = Field(default_factory=list)
     stale_evidence_count: int = 0
