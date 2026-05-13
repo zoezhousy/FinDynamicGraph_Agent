@@ -35,23 +35,33 @@ class KGQueryClient:
         WHERE datetime(r1.as_of_date) <= datetime($as_of)
         AND datetime(r1.as_of_date) >= datetime($signal_from)
 
+        OPTIONAL MATCH (c)-[rf:HAS_SIGNAL]->(f:FundamentalSignal)
+        WHERE datetime(rf.as_of_date) <= datetime($as_of)
+
         OPTIONAL MATCH (c)-[r2:MENTIONED_IN]->(n:NewsEvent)
         WHERE datetime(r2.as_of_date) <= datetime($as_of)
         AND datetime(r2.as_of_date) >= datetime($news_from)
 
-        OPTIONAL MATCH (n)-[:SUPPORTED_BY]->(e:Evidence)
-        OPTIONAL MATCH (src:SourceDocument)-[:CONTAINS_EVIDENCE]->(e)
-        OPTIONAL MATCH (e)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(cl:Claim)
+        OPTIONAL MATCH (n)-[:SUPPORTED_BY]->(ne:Evidence)
+        OPTIONAL MATCH (f)-[:SUPPORTED_BY]->(fe:Evidence)
+
+        OPTIONAL MATCH (src_news:SourceDocument)-[:CONTAINS_EVIDENCE]->(ne)
+        OPTIONAL MATCH (src_fund:SourceDocument)-[:CONTAINS_EVIDENCE]->(fe)
+
+        OPTIONAL MATCH (ne)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(nc:Claim)
+        OPTIONAL MATCH (fe)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(fc:Claim)
 
         WITH c,
             [x IN collect(DISTINCT s) WHERE x IS NOT NULL] AS raw_signals,
+            [x IN collect(DISTINCT f) WHERE x IS NOT NULL] AS raw_fundamentals,
             [x IN collect(DISTINCT n) WHERE x IS NOT NULL] AS raw_news,
-            [x IN collect(DISTINCT e) WHERE x IS NOT NULL] AS raw_evidences,
-            [x IN collect(DISTINCT src) WHERE x IS NOT NULL] AS raw_sources,
-            [x IN collect(DISTINCT cl) WHERE x IS NOT NULL] AS raw_claims
+            [x IN collect(DISTINCT ne) + collect(DISTINCT fe) WHERE x IS NOT NULL] AS raw_evidences,
+            [x IN collect(DISTINCT src_news) + collect(DISTINCT src_fund) WHERE x IS NOT NULL] AS raw_sources,
+            [x IN collect(DISTINCT nc) + collect(DISTINCT fc) WHERE x IS NOT NULL] AS raw_claims
 
         RETURN c,
             raw_signals[0..$max_signals] AS signals,
+            raw_fundamentals AS fundamentals,
             raw_news[0..$max_news] AS news,
             raw_evidences AS evidences,
             raw_sources AS sources,
@@ -73,6 +83,7 @@ class KGQueryClient:
                 return {
                     "company": [],
                     "signals": [],
+                    "fundamentals": [],
                     "news": [],
                     "evidences": [],
                     "sources": [],
@@ -81,12 +92,14 @@ class KGQueryClient:
 
             company = rec["c"]
             signals = rec["signals"] or []
+            fundamentals = rec["fundamentals"] or []
             news = rec["news"] or []
             evidences = rec["evidences"] or []
             sources = rec["sources"] or []
             claims = rec["claims"] or []
 
             signal_rows = [dict(node) for node in signals if node]
+            fundamental_rows = [dict(node) for node in fundamentals if node]
             news_rows = [dict(node) for node in news if node]
             evidence_rows = [dict(node) for node in evidences if node]
             source_rows = [dict(node) for node in sources if node]
@@ -108,6 +121,7 @@ class KGQueryClient:
                 return str(x.get("as_of_date") or "")
 
             signal_rows = sorted(signal_rows, key=signal_sort_key, reverse=True)[:max_signals]
+            fundamental_rows = sorted(fundamental_rows, key=signal_sort_key, reverse=True)
             news_rows = sorted(news_rows, key=news_sort_key, reverse=True)[:max_news]
             evidence_rows = sorted(evidence_rows, key=evidence_sort_key, reverse=True)
             source_rows = sorted(source_rows, key=source_sort_key, reverse=True)
@@ -116,6 +130,7 @@ class KGQueryClient:
             return {
                 "company": [dict(company)] if company else [],
                 "signals": signal_rows,
+                "fundamentals": fundamental_rows,
                 "news": news_rows,
                 "evidences": evidence_rows,
                 "sources": source_rows,

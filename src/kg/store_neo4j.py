@@ -58,7 +58,11 @@ class Neo4jKGStore:
             for stmt in cypher_statements:
                 session.run(stmt)
 
-    def clear_generated_data_for_ticker(self, ticker: str) -> None:
+    def clear_generated_data_for_ticker(
+        self,
+        ticker: str,
+        preserve_historical_traces: bool = True,
+    ) -> None:
         queries = [
             """
             MATCH (c:Company {ticker: $ticker})-[:HAS_SIGNAL]->(s:IndicatorSignal)
@@ -88,22 +92,39 @@ class Neo4jKGStore:
             DETACH DELETE f
             """,
             """
+            MATCH (cl:Claim)
+            WHERE cl.entity_id STARTS WITH ('claim:fundamental:' + $ticker + ':')
+            DETACH DELETE cl
+            """,
+            """
+            MATCH (e:Evidence)
+            WHERE e.evidence_id STARTS WITH ('fundamental_evidence:' + $ticker + ':')
+            DETACH DELETE e
+            """,
+            """
             MATCH (c:Company {ticker: $ticker})-[:HAS_RISK]->(r:RiskEvent)
             DETACH DELETE r
             """,
-            """
-            MATCH (d:DecisionTrace {ticker: $ticker})
-            DETACH DELETE d
-            """,
-            """
-            MATCH (aa:AgentAssessment {ticker: $ticker})
-            DETACH DELETE aa
-            """,
-            """
-            MATCH (b:BacktestOutcome {ticker: $ticker})
-            DETACH DELETE b
-            """,
         ]
+
+        if not preserve_historical_traces:
+            queries.extend(
+                [
+                    """
+                    MATCH (d:DecisionTrace {ticker: $ticker})
+                    DETACH DELETE d
+                    """,
+                    """
+                    MATCH (aa:AgentAssessment {ticker: $ticker})
+                    DETACH DELETE aa
+                    """,
+                    """
+                    MATCH (b:BacktestOutcome {ticker: $ticker})
+                    DETACH DELETE b
+                    """,
+                ]
+            )
+
         with self._driver.session(database=self._database) as session:
             for query in queries:
                 session.run(query, ticker=ticker)

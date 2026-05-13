@@ -16,14 +16,14 @@ class KGBatch:
     evidences: List[Evidence]
     relations: List[Relation]
 
-
+# build company entity from ticker and name
 def build_company_entity(ticker: str, name: str | None = None) -> Entity:
     properties = {"ticker": ticker}
     if name:
         properties["name"] = name
     return Entity(entity_id=f"company:{ticker}", type="Company", properties=properties)
 
-
+# build technical indicator signal entities from ohlcv frame
 def build_indicator_entities_from_ohlcv(
     ticker: str, ohlcv: pd.DataFrame
 ) -> Tuple[List[Entity], List[Relation]]:
@@ -33,6 +33,8 @@ def build_indicator_entities_from_ohlcv(
     if "date" not in ohlcv.columns or "close" not in ohlcv.columns:
         raise ValueError("OHLCV frame must contain at least 'date' and 'close' columns.")
 
+    # For simplicity, we only generate one type of technical signal based on 20-day moving average crossover.
+    # TODO: in the future, expand to more technical indicators and patterns in the future.
     ohlcv = ohlcv.sort_values("date").reset_index(drop=True)
     close = ohlcv["close"].astype(float)
     ma20 = close.rolling(window=20, min_periods=20).mean()
@@ -89,7 +91,7 @@ def build_indicator_entities_from_ohlcv(
 
     return entities, relations
 
-
+# build news from news frame
 def build_news_from_frame(
     ticker: str, news: pd.DataFrame
 ) -> Tuple[List[Entity], List[Evidence], List[Relation]]:
@@ -289,6 +291,184 @@ def build_news_from_frame(
 
     return entities, evidences, relations
 
+# add fundamental signal entities builder from fundamental frame
+def build_fundamentals_from_frame(
+    ticker: str,
+    fundamentals: pd.DataFrame,
+) -> Tuple[List[Entity], List[Evidence], List[Relation]]:
+    """Build FundamentalSignal nodes from collected fundamental metrics.
+
+    Output structure:
+
+    Company
+        -[:HAS_SIGNAL]->
+    FundamentalSignal
+        -[:SUPPORTED_BY]->
+    Evidence
+
+    Evidence
+        -[:SUPPORTS_CLAIM]->
+    Claim
+        -[:CLAIM_USED_BY]->
+    FundamentalSignal
+    """
+
+    entities: List[Entity] = []
+    evidences: List[Evidence] = []
+    relations: List[Relation] = []
+
+    # The input frame is expected to have columns: metric, value, as_of_date, source (optional)
+    required_cols = {"metric", "value", "as_of_date"}
+    missing = required_cols - set(fundamentals.columns)
+    if missing:
+        raise ValueError(f"Fundamentals frame missing columns: {sorted(missing)}")
+
+    # for each fundamental metric, create a fundamental signal entity & an evidence node & claim node & link them
+    # Claim text: generated based on metrics
+    for _, row in fundamentals.iterrows():
+        metric = str(row.get("metric") or "").strip()
+        if not metric:
+            continue
+
+        raw_value = row.get("value")
+        numeric_value = row.get("numeric_value")
+
+        value_for_interpretation = numeric_value
+        if pd.isna(value_for_interpretation):
+            value_for_interpretation = raw_value
+
+        as_of_date = _parse_dt(row.get("as_of_date")) or datetime.utcnow()
+        source_name = str(row.get("source") or "yfinance.info")
+
+        stable_hash = sha1(
+            f"{ticker}|{metric}|{raw_value}|{numeric_value}|{as_of_date.date()}".encode("utf-8")
+        ).hexdigest()[:16]
+
+        signal_id = f"fundamental:{ticker}:{metric}:{stable_hash}"
+        evidence_id = f"fundamental_evidence:{ticker}:{metric}:{stable_hash}"
+        claim_id = f"claim:fundamental:{ticker}:{metric}:{stable_hash}"
+
+        direction, strength, description = _interpret_fundamental_metric(
+            metric,
+            value_for_interpretation,
+        )
+
+        evidence_text = (
+            f"{ticker} fundamental metric {metric} = {raw_value}, "
+            f"numeric_value = {numeric_value}, collected from {source_name}."
+        )
+
+        evidences.append(
+            Evidence(
+                evidence_id=evidence_id,
+                source_type="fundamental",
+                source_name=source_name,
+                url=None,
+                title=f"{ticker} {metric}",
+                published_at=as_of_date,
+                extracted_text=evidence_text,
+                confidence=0.75,
+            )
+        )
+
+        entities.append(
+            Entity(
+                entity_id=signal_id,
+                type="FundamentalSignal",
+                properties={
+                    "ticker": ticker,
+                    "name": metric,
+                    "signal_type": "fundamental",
+                    "direction": direction,
+                    "strength": strength,
+                    "metric": metric,
+                    "value": _json_safe_value(raw_value),
+                    "numeric_value": None if pd.isna(numeric_value) else _json_safe_value(numeric_value),
+                    "as_of_date": as_of_date.isoformat(),
+                    "description": description,
+                    "evidence_id": evidence_id,
+                    "claim_id": claim_id,
+                },
+            )
+        )
+
+        entities.append(
+            Entity(
+                entity_id=claim_id,
+                type="Claim",
+                properties={
+                    "claim_id": claim_id,
+                    "ticker": ticker,
+                    "claim_type": "fundamental",
+                    "text": description,
+                    "polarity": _direction_to_claim_polarity(direction),
+                    "confidence": 0.75,
+                    "as_of_date": as_of_date.isoformat(),
+                    "valid_from": as_of_date.isoformat(),
+                    "valid_to": None,
+                    "evidence_ids": [evidence_id],
+                },
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=f"company:{ticker}",
+                end_id=signal_id,
+                type="HAS_SIGNAL",
+                as_of_date=as_of_date,
+                confidence=0.75,
+                direction=direction,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=signal_id,
+                end_id=evidence_id,
+                type="SUPPORTED_BY",
+                as_of_date=as_of_date,
+                confidence=0.75,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=evidence_id,
+                end_id=claim_id,
+                type="SUPPORTS_CLAIM",
+                as_of_date=as_of_date,
+                confidence=0.75,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=claim_id,
+                end_id=signal_id,
+                type="CLAIM_USED_BY",
+                as_of_date=as_of_date,
+                confidence=0.75,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+    return entities, evidences, relations
+
 
 def build_kg_batch_for_ticker(
     ticker: str, ohlcv: pd.DataFrame, news: pd.DataFrame
@@ -331,3 +511,150 @@ def _parse_dt(value: object) -> datetime | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return None
+    
+
+def _interpret_fundamental_metric(metric: str, value: object) -> tuple[str, float, str]:
+    """Simple rule-based interpretation for fundamental fields.
+
+    This is intentionally conservative. It gives the FundamentalAgent structured
+    signals while avoiding overclaiming from one isolated metric.
+    """
+
+    numeric_value = _to_float(value)
+
+    if numeric_value is None:
+        return (
+            "neutral",
+            0.4,
+            f"Fundamental metric {metric} is available with non-numeric value: {value}.",
+        )
+
+    metric_lower = metric.lower()
+
+    if metric_lower in {"profitmargins", "operatingmargins", "grossmargins"}:
+        if numeric_value >= 0.20:
+            direction = "bullish"
+            strength = 0.75
+        elif numeric_value < 0:
+            direction = "bearish"
+            strength = 0.75
+        else:
+            direction = "neutral"
+            strength = 0.5
+        return direction, strength, f"{metric} is {numeric_value:.4f}, indicating {direction} profitability signal."
+
+    if metric_lower in {"returnonequity", "returnonassets"}:
+        if numeric_value >= 0.15:
+            direction = "bullish"
+            strength = 0.75
+        elif numeric_value < 0:
+            direction = "bearish"
+            strength = 0.75
+        else:
+            direction = "neutral"
+            strength = 0.5
+        return direction, strength, f"{metric} is {numeric_value:.4f}, indicating {direction} return efficiency signal."
+
+    if metric_lower in {"revenuegrowth", "earningsgrowth"}:
+        if numeric_value >= 0.10:
+            direction = "bullish"
+            strength = 0.75
+        elif numeric_value < 0:
+            direction = "bearish"
+            strength = 0.75
+        else:
+            direction = "neutral"
+            strength = 0.5
+        return direction, strength, f"{metric} is {numeric_value:.4f}, indicating {direction} growth signal."
+
+    if metric_lower == "debttoequity":
+        if numeric_value <= 80:
+            direction = "bullish"
+            strength = 0.65
+        elif numeric_value >= 200:
+            direction = "bearish"
+            strength = 0.75
+        else:
+            direction = "neutral"
+            strength = 0.5
+        return direction, strength, f"Debt-to-equity is {numeric_value:.4f}, indicating {direction} leverage signal."
+
+    if metric_lower in {"currentratio", "quickratio"}:
+        if numeric_value >= 1.5:
+            direction = "bullish"
+            strength = 0.65
+        elif numeric_value < 1.0:
+            direction = "bearish"
+            strength = 0.7
+        else:
+            direction = "neutral"
+            strength = 0.5
+        return direction, strength, f"{metric} is {numeric_value:.4f}, indicating {direction} liquidity signal."
+
+    if metric_lower in {"trailingpe", "forwardpe"}:
+        if numeric_value <= 0:
+            direction = "bearish"
+            strength = 0.6
+        elif numeric_value < 12:
+            direction = "bullish"
+            strength = 0.55
+        elif numeric_value > 40:
+            direction = "bearish"
+            strength = 0.55
+        else:
+            direction = "neutral"
+            strength = 0.45
+        return direction, strength, f"{metric} is {numeric_value:.4f}, indicating {direction} valuation signal."
+
+    if metric_lower == "pricetobook":
+        if numeric_value < 1.0:
+            direction = "bullish"
+            strength = 0.55
+        elif numeric_value > 8.0:
+            direction = "bearish"
+            strength = 0.55
+        else:
+            direction = "neutral"
+            strength = 0.45
+        return direction, strength, f"Price-to-book is {numeric_value:.4f}, indicating {direction} valuation signal."
+
+    if metric_lower in {"freecashflow", "operatingcashflow", "ebitda", "totalrevenue", "grossprofits"}:
+        if numeric_value > 0:
+            direction = "bullish"
+            strength = 0.55
+        elif numeric_value < 0:
+            direction = "bearish"
+            strength = 0.65
+        else:
+            direction = "neutral"
+            strength = 0.4
+        return direction, strength, f"{metric} is {numeric_value:.4f}, indicating {direction} scale/cashflow signal."
+
+    return (
+        "neutral",
+        0.35,
+        f"Fundamental metric {metric} is {numeric_value:.4f}; no strong directional rule is applied.",
+    )
+
+
+def _direction_to_claim_polarity(direction: str) -> str:
+    if direction == "bullish":
+        return "supports"
+    if direction == "bearish":
+        return "contradicts"
+    if direction == "neutral":
+        return "neutral"
+    return "unknown"
+
+
+def _to_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _json_safe_value(value: object) -> object:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
