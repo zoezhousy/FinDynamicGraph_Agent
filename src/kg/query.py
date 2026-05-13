@@ -5,6 +5,7 @@ from typing import Any
 
 from neo4j import GraphDatabase, basic_auth
 
+
 class KGQueryClient:
     """Read-only query helper for agents."""
 
@@ -38,13 +39,17 @@ class KGQueryClient:
         WHERE datetime(r2.as_of_date) <= datetime($as_of)
           AND datetime(r2.as_of_date) >= datetime($news_from)
 
+        OPTIONAL MATCH (n)-[:SUPPORTED_BY]->(e:Evidence)
+
         WITH c,
              [x IN collect(DISTINCT s) WHERE x IS NOT NULL] AS raw_signals,
-             [x IN collect(DISTINCT n) WHERE x IS NOT NULL] AS raw_news
+             [x IN collect(DISTINCT n) WHERE x IS NOT NULL] AS raw_news,
+             [x IN collect(DISTINCT e) WHERE x IS NOT NULL] AS raw_evidences
 
         RETURN c,
                raw_signals[0..$max_signals] AS signals,
-               raw_news[0..$max_news] AS news
+               raw_news[0..$max_news] AS news,
+               raw_evidences AS evidences
         """
 
         with self._driver.session(database=self._database) as session:
@@ -59,28 +64,57 @@ class KGQueryClient:
             ).single()
 
             if not rec:
-                return {"company": [], "signals": [], "news": []}
+                return {"company": [], "signals": [], "news": [], "evidences": []}
 
             company = rec["c"]
             signals = rec["signals"] or []
             news = rec["news"] or []
+            evidences = rec["evidences"] or []
 
-            # 转成 Python dict
             signal_rows = [dict(node) for node in signals if node]
             news_rows = [dict(node) for node in news if node]
+            evidence_rows = [dict(node) for node in evidences if node]
 
-            # Python 端按时间排序，防止 collect 后顺序不稳定
             def signal_sort_key(x: dict[str, Any]) -> str:
                 return str(x.get("as_of_date") or "")
 
             def news_sort_key(x: dict[str, Any]) -> str:
                 return str(x.get("published_at") or "")
 
+            def evidence_sort_key(x: dict[str, Any]) -> str:
+                return str(x.get("published_at") or "")
+
             signal_rows = sorted(signal_rows, key=signal_sort_key, reverse=True)[:max_signals]
             news_rows = sorted(news_rows, key=news_sort_key, reverse=True)[:max_news]
+            evidence_rows = sorted(evidence_rows, key=evidence_sort_key, reverse=True)
 
             return {
                 "company": [dict(company)] if company else [],
                 "signals": signal_rows,
                 "news": news_rows,
+                "evidences": evidence_rows,
+            }
+
+    def get_decision_trace(self, decision_id: str) -> dict[str, Any] | None:
+        cypher = """
+        MATCH (d:DecisionTrace {entity_id: $decision_id})
+        OPTIONAL MATCH (d)-[:HAS_ASSESSMENT]->(aa:AgentAssessment)
+        OPTIONAL MATCH (aa)-[:USES_EVIDENCE]->(ae)
+        OPTIONAL MATCH (d)-[:USES_EVIDENCE]->(de)
+        OPTIONAL MATCH (d)-[:FOR_COMPANY]->(c:Company)
+        RETURN d, c,
+               collect(DISTINCT aa) AS assessments,
+               collect(DISTINCT ae) AS assessment_evidence,
+               collect(DISTINCT de) AS decision_evidence
+        """
+        with self._driver.session(database=self._database) as session:
+            rec = session.run(cypher, decision_id=decision_id).single()
+            if not rec:
+                return None
+            return {
+                "decision": dict(rec["d"]) if rec["d"] else None,
+                "company": dict(rec["c"]) if rec["c"] else None,
+                "assessments": [dict(x) for x in (rec["assessments"] or []) if x],
+                "assessment_evidence": [dict(x) for x in (rec["assessment_evidence"] or []) if x],
+                "decision_evidence": [dict(x) for x in (rec["decision_evidence"] or []) if x],
             }

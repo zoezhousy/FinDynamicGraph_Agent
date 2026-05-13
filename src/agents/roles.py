@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal
 
 from src.llm.client import OpenAICompatibleClient
 from src.llm.prompts import AGENT_SYSTEM_PROMPT, build_agent_prompt
+from src.kg.schema import AgentAssessment, DecisionTrace
 
 
 DecisionAction = Literal["buy", "sell", "hold", "abstain"]
@@ -109,10 +110,56 @@ def risk_agent(subgraph: Dict[str, List[Dict[str, Any]]], ticker: str, trade_dat
     return _llm_report("risk", ticker, trade_date, subgraph)
 
 
+def _is_stale_ref(evidence_ref: str, subgraph: Dict[str, List[Dict[str, Any]]], trade_date: datetime) -> bool:
+    evidence_map = {
+        str(item.get("evidence_id")): item
+        for item in subgraph.get("evidences", [])
+        if item.get("evidence_id")
+    }
+    signal_map = {
+        str(item.get("entity_id")): item
+        for item in subgraph.get("signals", [])
+        if item.get("entity_id")
+    }
+
+    if evidence_ref in evidence_map:
+        published_at = evidence_map[evidence_ref].get("published_at")
+        if not published_at:
+            return False
+        try:
+            return datetime.fromisoformat(str(published_at).replace("Z", "+00:00")) < trade_date
+        except Exception:
+            return False
+
+    if evidence_ref in signal_map:
+        valid_to = signal_map[evidence_ref].get("valid_to")
+        if not valid_to:
+            return False
+        try:
+            return datetime.fromisoformat(str(valid_to).replace("Z", "+00:00")) < trade_date
+        except Exception:
+            return False
+
+    return False
+
+
+def _aligns(action: DecisionAction, stance: Stance) -> bool:
+    if action == "buy":
+        return stance == "bullish"
+    if action == "sell":
+        return stance == "bearish"
+    if action == "hold":
+        return stance in {"neutral", "uncertain"}
+    if action == "abstain":
+        return stance in {"uncertain", "neutral"}
+    return False
+
+
 def portfolio_manager_decide(
     ticker: str,
     trade_date: datetime,
     reports: List[AgentReport],
+    subgraph: Dict[str, List[Dict[str, Any]]] | None = None,
 ) -> Dict[str, Any]:
     weights = {
         "technical": 0.35,
@@ -143,7 +190,8 @@ def portfolio_manager_decide(
     if len(set(s for s in role_to_stance.values() if s in {"bullish", "bearish"})) > 1:
         conflict_level += 0.2
 
-    evidence_count = len([x for x in evidence_refs if x])
+    evidence_refs = sorted(set(x for x in evidence_refs if x))
+    evidence_count = len(evidence_refs)
     confidence = max(0.05, min(0.95, sum(r.confidence for r in reports) / max(1, len(reports)) - conflict_level * 0.25))
 
     if evidence_count < 2 or confidence < 0.2:
@@ -162,6 +210,74 @@ def portfolio_manager_decide(
         action = "hold"
         reason = "Signals are mixed or not strong enough for directional action."
 
+    bullish_support_count = sum(1 for r in reports if r.stance == "bullish")
+    bearish_support_count = sum(1 for r in reports if r.stance == "bearish")
+    neutral_support_count = sum(1 for r in reports if r.stance in {"neutral", "uncertain"})
+    supporting_roles = [r.role for r in reports if _aligns(action, r.stance)]
+    opposing_roles = [r.role for r in reports if r.role not in supporting_roles and r.stance in {"bullish", "bearish"}]
+
+    stale_evidence_count = 0
+    fresh_evidence_count = len(evidence_refs)
+    if subgraph is not None:
+        stale_evidence_count = sum(1 for ref in evidence_refs if _is_stale_ref(ref, subgraph, trade_date))
+        fresh_evidence_count = max(0, len(evidence_refs) - stale_evidence_count)
+
+    evidence_alignment = "aligned"
+    if action in {"buy", "sell"} and not supporting_roles:
+        evidence_alignment = "unsupported"
+    elif opposing_roles and not supporting_roles:
+        evidence_alignment = "contradicted"
+    elif stale_evidence_count > fresh_evidence_count:
+        evidence_alignment = "stale"
+    elif opposing_roles:
+        evidence_alignment = "mixed"
+
+    trace_payload = {
+        "technical_score": round(technical_score, 4),
+        "news_score": round(news_score, 4),
+        "fundamental_score": round(fundamental_score, 4),
+        "risk_score": round(risk_score, 4),
+    }
+
+    decision_id = f"decision:{ticker}:{trade_date.date().isoformat()}"
+    assessments = [
+        AgentAssessment(
+            assessment_id=f"assessment:{report.role}:{ticker}:{trade_date.date().isoformat()}",
+            ticker=ticker,
+            trade_date=trade_date,
+            agent_role=report.role,
+            stance=report.stance,
+            confidence=round(report.confidence, 4),
+            score=round(report.score, 4),
+            summary=report.summary,
+            evidence_refs=report.evidence_refs,
+            factors=report.factors,
+            supports_decision=report.role in supporting_roles,
+            opposes_decision=report.role in opposing_roles,
+        )
+        for report in reports
+    ]
+    decision_trace = DecisionTrace(
+        decision_id=decision_id,
+        ticker=ticker,
+        trade_date=trade_date,
+        action=action,
+        final_score=round(final_score, 4),
+        confidence=round(confidence, 4),
+        conflict_level=round(conflict_level, 4),
+        decision_reason=reason,
+        bullish_support_count=bullish_support_count,
+        bearish_support_count=bearish_support_count,
+        neutral_support_count=neutral_support_count,
+        evidence_ids=evidence_refs,
+        supporting_roles=supporting_roles,
+        opposing_roles=opposing_roles,
+        stale_evidence_count=stale_evidence_count,
+        fresh_evidence_count=fresh_evidence_count,
+        evidence_alignment=evidence_alignment,
+        trace=trace_payload,
+    )
+
     return {
         "ticker": ticker,
         "trade_date": trade_date.date().isoformat(),
@@ -170,12 +286,14 @@ def portfolio_manager_decide(
         "confidence": round(confidence, 4),
         "conflict_level": round(conflict_level, 4),
         "decision_reason": reason,
-        "evidence_refs": sorted(set(x for x in evidence_refs if x)),
-        "trace": {
-            "technical_score": round(technical_score, 4),
-            "news_score": round(news_score, 4),
-            "fundamental_score": round(fundamental_score, 4),
-            "risk_score": round(risk_score, 4),
-        },
+        "evidence_refs": evidence_refs,
+        "supporting_roles": supporting_roles,
+        "opposing_roles": opposing_roles,
+        "stale_evidence_count": stale_evidence_count,
+        "fresh_evidence_count": fresh_evidence_count,
+        "evidence_alignment": evidence_alignment,
+        "trace": trace_payload,
         "agent_reports": [asdict(r) for r in reports],
+        "decision_trace": decision_trace.model_dump(mode="json"),
+        "agent_assessments": [assessment.model_dump(mode="json") for assessment in assessments],
     }

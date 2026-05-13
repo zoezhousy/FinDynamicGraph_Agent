@@ -154,6 +154,21 @@ def build_news_from_frame(
             )
         )
 
+        # fix bugs: warining on evidence_support relationship(connect the NewsEvent and Evidence)
+        relations.append(
+            Relation(
+                start_id=news_ent_id,
+                end_id=ev_id,
+                type="SUPPORTED_BY",
+                as_of_date=as_of_date,
+                confidence=float(row.get("score") or 0.6),
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[ev_id],
+            )
+        )
+
     return entities, evidences, relations
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -73,7 +74,7 @@ def run_collection(config: CollectionConfig) -> None:
 
             try:
                 ohlcv_df = market_collector.fetch_ohlcv(ticker)
-                save_parquet(ohlcv_df, ticker_dir / "ohlcv_2021_2025.parquet")
+                save_parquet(ohlcv_df, ticker_dir / "ohlcv_2021_now.parquet")
             except Exception as exc:
                 logging.exception("OHLCV collection failed for %s: %s", ticker, exc)
 
@@ -122,12 +123,19 @@ def run_collection(config: CollectionConfig) -> None:
 
 def main() -> None:
     load_dotenv()
+
+    # 修改这里：把 end_date 改成今天，实现 2021 -> now
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
     config = CollectionConfig(
         tickers=["0005.HK", "0700.HK", "1299.HK"],
         start_date="2021-01-01",
-        end_date="2025-12-31",
+        end_date=today_str,
         news_limit_per_ticker=10,
     )
+
+    print(f"Collect range: {config.start_date} -> {config.end_date}")
+
     setup_logging(config.log_file)
     run_collection(config)
 

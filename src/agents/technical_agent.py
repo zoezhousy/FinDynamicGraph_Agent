@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import List, Tuple
 
 import pandas as pd
@@ -14,6 +13,11 @@ from src.kg.schema import Entity, Relation
 class TechnicalAgent(BaseAgent):
     def __init__(self) -> None:
         super().__init__("technical_agent")
+
+    def run(self, input_data: dict) -> Tuple[List[Entity], List[Relation]]:
+        ticker = input_data["ticker"]
+        ohlcv = input_data["ohlcv"]
+        return self.build_signal_entities_from_ohlcv(ticker, ohlcv)
 
     def build_signal_entities_from_ohlcv(
         self,
