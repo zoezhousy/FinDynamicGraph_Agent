@@ -154,6 +154,33 @@ def _aligns(action: DecisionAction, stance: Stance) -> bool:
         return stance in {"uncertain", "neutral"}
     return False
 
+# collect fallback evidence refs from subgraph for risk agent 
+# when explicit risk events are not available.
+def _collect_fallback_evidence_refs(
+    subgraph: Dict[str, List[Dict[str, Any]]] | None,
+    limit: int = 20,
+) -> List[str]:
+    if subgraph is None:
+        return []
+
+    refs: list[str] = []
+
+    for key, id_key in (
+        ("risks", "evidence_id"),
+        ("fundamentals", "evidence_id"),
+        ("news", "evidence_id"),
+        ("evidences", "evidence_id"),
+        ("signals", "entity_id"),
+    ):
+        for item in subgraph.get(key, []) or []:
+            value = item.get(id_key)
+            if value:
+                refs.append(str(value))
+
+            if len(refs) >= limit:
+                return sorted(set(refs))
+
+    return sorted(set(refs))
 
 def portfolio_manager_decide(
     ticker: str,
@@ -190,7 +217,12 @@ def portfolio_manager_decide(
     if len(set(s for s in role_to_stance.values() if s in {"bullish", "bearish"})) > 1:
         conflict_level += 0.2
 
+    # de-duplicate and filter out empty refs
     evidence_refs = sorted(set(x for x in evidence_refs if x))
+    
+    if not evidence_refs:
+        evidence_refs = _collect_fallback_evidence_refs(subgraph)
+
     evidence_count = len(evidence_refs)
     confidence = max(0.05, min(0.95, sum(r.confidence for r in reports) / max(1, len(reports)) - conflict_level * 0.25))
 

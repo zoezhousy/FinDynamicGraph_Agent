@@ -14,7 +14,7 @@ from src.collectors.news_collector import NewsCollector
 from src.config import CollectionConfig
 from src.kg.schema import Entity
 from src.kg.store_neo4j import Neo4jKGStore
-from src.kg.update_pipeline import build_fundamentals_from_frame, build_news_from_frame
+from src.kg.update_pipeline import build_fundamentals_from_frame, build_news_from_frame, build_risk_events_from_frame
 from src.utils.io import ensure_dir, save_parquet
 
 
@@ -114,6 +114,7 @@ def run_collection(config: CollectionConfig) -> None:
                 except Exception as exc:
                     logging.exception("Company KG upsert failed for %s: %s", ticker, exc)
 
+            # update Techinical KG
             if kg_store and ohlcv_df is not None:
                 try:
                     signal_entities, signal_relations = technical_agent.build_signal_entities_from_ohlcv(
@@ -127,6 +128,7 @@ def run_collection(config: CollectionConfig) -> None:
                 except Exception as exc:
                     logging.exception("Technical KG update failed for %s: %s", ticker, exc)
 
+            # Update News KG
             if kg_store and news_df is not None:
                 try:
                     news_entities, evidences, news_relations = build_news_from_frame(ticker, news_df)
@@ -137,6 +139,7 @@ def run_collection(config: CollectionConfig) -> None:
                 except Exception as exc:
                     logging.exception("News KG update failed for %s: %s", ticker, exc)
 
+            # Update Fundamental KG 
             if kg_store and fundamentals_df is not None:
                 try:
                     fundamental_entities, fundamental_evidences, fundamental_relations = (
@@ -148,6 +151,21 @@ def run_collection(config: CollectionConfig) -> None:
                     logging.info("Fundamental graph updated for ticker=%s", ticker)
                 except Exception as exc:
                     logging.exception("Fundamental KG update failed for %s: %s", ticker, exc)
+            
+            # Update risk events in KG based on OHLCV and fundamentals.
+            if kg_store and ohlcv_df is not None:
+                try:
+                    risk_entities, risk_evidences, risk_relations = build_risk_events_from_frame(
+                        ticker=ticker,
+                        ohlcv=ohlcv_df,
+                        fundamentals=fundamentals_df,
+                    )
+                    kg_store.upsert_entities(risk_entities)
+                    kg_store.upsert_evidences(risk_evidences)
+                    kg_store.upsert_relations(risk_relations)
+                    logging.info("Risk graph updated for ticker=%s", ticker)
+                except Exception as exc:
+                    logging.exception("Risk KG update failed for %s: %s", ticker, exc)
 
             logging.info("Done ticker=%s", ticker)
     finally:

@@ -482,6 +482,249 @@ def build_kg_batch_for_ticker(
 
     return KGBatch(entities=entities, evidences=evidences, relations=relations)
 
+# update risk events based on OHLCV and fundamental metrics
+def build_risk_events_from_frame(
+    ticker: str,
+    ohlcv: pd.DataFrame,
+    fundamentals: pd.DataFrame | None = None,
+) -> Tuple[List[Entity], List[Evidence], List[Relation]]:
+    """Build explicit KG risk events from OHLCV and fundamental metrics.
+
+    Risk types:
+    - volatility risk
+    - drawdown risk
+    - beta risk
+    - leverage risk
+    - liquidity risk
+    """
+
+    entities: List[Entity] = []
+    evidences: List[Evidence] = []
+    relations: List[Relation] = []
+
+    if "date" not in ohlcv.columns or "close" not in ohlcv.columns:
+        raise ValueError("OHLCV frame must contain at least 'date' and 'close' columns.")
+
+    frame = ohlcv.sort_values("date").reset_index(drop=True).copy()
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["close"] = frame["close"].astype(float)
+
+    latest_date = _to_dt(frame["date"].iloc[-1])
+    close = frame["close"]
+
+    daily_ret = close.pct_change()
+    vol_20 = float(daily_ret.tail(20).std() or 0.0)
+    drawdown_60 = float((close.iloc[-1] / close.tail(60).max()) - 1.0)
+
+    risk_specs: list[dict[str, object]] = []
+
+    if vol_20 >= 0.025:
+        risk_specs.append(
+            {
+                "name": "high_20d_volatility",
+                "severity": min(1.0, vol_20 / 0.06),
+                "direction": "bearish",
+                "description": f"{ticker} has elevated 20-day daily volatility of {vol_20:.4f}.",
+                "metric": "vol_20",
+                "value": vol_20,
+            }
+        )
+
+    if drawdown_60 <= -0.12:
+        risk_specs.append(
+            {
+                "name": "large_60d_drawdown",
+                "severity": min(1.0, abs(drawdown_60) / 0.35),
+                "direction": "bearish",
+                "description": f"{ticker} is in a 60-day drawdown of {drawdown_60:.4f}.",
+                "metric": "drawdown_60",
+                "value": drawdown_60,
+            }
+        )
+
+    if fundamentals is not None and not fundamentals.empty:
+        metric_map = {
+            str(row.get("metric")): row
+            for _, row in fundamentals.iterrows()
+            if row.get("metric") is not None
+        }
+
+        beta = _get_fundamental_numeric(metric_map, "beta")
+        if beta is not None and beta >= 1.4:
+            risk_specs.append(
+                {
+                    "name": "high_beta_risk",
+                    "severity": min(1.0, beta / 2.5),
+                    "direction": "bearish",
+                    "description": f"{ticker} has high beta of {beta:.4f}, indicating market sensitivity risk.",
+                    "metric": "beta",
+                    "value": beta,
+                }
+            )
+
+        debt_to_equity = _get_fundamental_numeric(metric_map, "debtToEquity")
+        if debt_to_equity is not None and debt_to_equity >= 200:
+            risk_specs.append(
+                {
+                    "name": "high_leverage_risk",
+                    "severity": min(1.0, debt_to_equity / 400.0),
+                    "direction": "bearish",
+                    "description": f"{ticker} has high debt-to-equity of {debt_to_equity:.4f}.",
+                    "metric": "debtToEquity",
+                    "value": debt_to_equity,
+                }
+            )
+
+        current_ratio = _get_fundamental_numeric(metric_map, "currentRatio")
+        if current_ratio is not None and current_ratio < 1.0:
+            risk_specs.append(
+                {
+                    "name": "weak_liquidity_risk",
+                    "severity": min(1.0, (1.0 - current_ratio) + 0.5),
+                    "direction": "bearish",
+                    "description": f"{ticker} has weak current ratio of {current_ratio:.4f}.",
+                    "metric": "currentRatio",
+                    "value": current_ratio,
+                }
+            )
+
+    if not risk_specs:
+        risk_specs.append(
+            {
+                "name": "no_major_rule_based_risk_detected",
+                "severity": 0.2,
+                "direction": "neutral",
+                "description": f"No major rule-based volatility, drawdown, leverage, beta, or liquidity risk detected for {ticker}.",
+                "metric": "risk_screen",
+                "value": 0.0,
+            }
+        )
+
+    for spec in risk_specs:
+        risk_name = str(spec["name"])
+        description = str(spec["description"])
+        direction = str(spec["direction"])
+        severity = float(spec["severity"])
+        metric = str(spec["metric"])
+        value = spec["value"]
+
+        stable_hash = sha1(
+            f"{ticker}|{risk_name}|{metric}|{value}|{latest_date.date()}".encode("utf-8")
+        ).hexdigest()[:16]
+
+        risk_id = f"risk:{ticker}:{risk_name}:{stable_hash}"
+        evidence_id = f"risk_evidence:{ticker}:{risk_name}:{stable_hash}"
+        claim_id = f"claim:risk:{ticker}:{risk_name}:{stable_hash}"
+
+        evidences.append(
+            Evidence(
+                evidence_id=evidence_id,
+                source_type="risk",
+                source_name="rule_based_risk_builder",
+                url=None,
+                title=f"{ticker} {risk_name}",
+                published_at=latest_date,
+                extracted_text=description,
+                confidence=0.75,
+            )
+        )
+
+        entities.append(
+            Entity(
+                entity_id=risk_id,
+                type="RiskEvent",
+                properties={
+                    "ticker": ticker,
+                    "name": risk_name,
+                    "risk_type": metric,
+                    "direction": direction,
+                    "severity": severity,
+                    "strength": severity,
+                    "value": _json_safe_value(value),
+                    "as_of_date": latest_date.isoformat(),
+                    "description": description,
+                    "evidence_id": evidence_id,
+                    "claim_id": claim_id,
+                },
+            )
+        )
+
+        entities.append(
+            Entity(
+                entity_id=claim_id,
+                type="Claim",
+                properties={
+                    "claim_id": claim_id,
+                    "ticker": ticker,
+                    "claim_type": "risk",
+                    "text": description,
+                    "polarity": _direction_to_claim_polarity(direction),
+                    "confidence": 0.75,
+                    "as_of_date": latest_date.isoformat(),
+                    "valid_from": latest_date.isoformat(),
+                    "valid_to": None,
+                    "evidence_ids": [evidence_id],
+                },
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=f"company:{ticker}",
+                end_id=risk_id,
+                type="HAS_RISK",
+                as_of_date=latest_date,
+                confidence=0.75,
+                direction=direction,
+                valid_from=latest_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=risk_id,
+                end_id=evidence_id,
+                type="SUPPORTED_BY",
+                as_of_date=latest_date,
+                confidence=0.75,
+                direction=None,
+                valid_from=latest_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=evidence_id,
+                end_id=claim_id,
+                type="SUPPORTS_CLAIM",
+                as_of_date=latest_date,
+                confidence=0.75,
+                direction=None,
+                valid_from=latest_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+        relations.append(
+            Relation(
+                start_id=claim_id,
+                end_id=risk_id,
+                type="CLAIM_USED_BY",
+                as_of_date=latest_date,
+                confidence=0.75,
+                direction=None,
+                valid_from=latest_date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+
+    return entities, evidences, relations
 
 def _build_news_claim_text(ticker: str, title: object, content: object) -> str:
     title_text = str(title or "").strip()
@@ -658,3 +901,25 @@ def _json_safe_value(value: object) -> object:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+# helper to extract numeric value from fundamental metric rows
+def _get_fundamental_numeric(metric_map: dict[str, object], metric: str) -> float | None:
+    row = metric_map.get(metric)
+    if row is None:
+        return None
+
+    try:
+        numeric_value = row.get("numeric_value")
+        if numeric_value is not None and not pd.isna(numeric_value):
+            return float(numeric_value)
+    except Exception:
+        pass
+
+    try:
+        value = row.get("value")
+        if value is not None and not pd.isna(value):
+            return float(value)
+    except Exception:
+        return None
+
+    return None
