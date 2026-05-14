@@ -171,6 +171,7 @@ class KGQueryClient:
                 "decision_evidence": [dict(x) for x in (rec["decision_evidence"] or []) if x],
                 "sources": [dict(x) for x in (rec["sources"] or []) if x],
                 "claims": [dict(x) for x in (rec["claims"] or []) if x],
+                "outcomes": [dict(x) for x in (rec["outcomes"] or []) if x],
             }
     
     def get_backtest_outcome(self, outcome_id: str) -> dict[str, Any] | None:

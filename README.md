@@ -2,6 +2,7 @@
 Dissertation: Dynamic Evidence-Grounded Financial Knowledge Graph for Multi-Agent Simulated Trading
 
 ### Milestone 1 finished
+#### SourceDocument → Evidence → Claim → AgentAssessment → DecisionTrace → BacktestOutcome
 
 ## Current Neo4j-oriented MVP scope
 
