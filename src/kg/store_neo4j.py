@@ -54,9 +54,16 @@ class Neo4jKGStore:
             "CREATE CONSTRAINT assessment_id IF NOT EXISTS FOR (aa:AgentAssessment) REQUIRE aa.entity_id IS UNIQUE",
             "CREATE CONSTRAINT backtest_outcome_id IF NOT EXISTS FOR (b:BacktestOutcome) REQUIRE b.entity_id IS UNIQUE",
         ]
-        with self._driver.session(database=self._database) as session:
-            for stmt in cypher_statements:
-                session.run(stmt)
+        # Suppress Neo4j driver INFO notifications during constraint creation
+        neo4j_logger = logging.getLogger("neo4j")
+        prev_level = neo4j_logger.level
+        neo4j_logger.setLevel(logging.WARNING)
+        try:
+            with self._driver.session(database=self._database) as session:
+                for stmt in cypher_statements:
+                    session.run(stmt)
+        finally:
+            neo4j_logger.setLevel(prev_level)
 
     def clear_generated_data_for_ticker(
         self,
@@ -128,6 +135,75 @@ class Neo4jKGStore:
         with self._driver.session(database=self._database) as session:
             for query in queries:
                 session.run(query, ticker=ticker)
+
+    def clear_old_indicators(
+        self,
+        ticker: str,
+        older_than: str,
+    ) -> int:
+        """
+        Delete IndicatorSignal nodes for a ticker older than the given date.
+        Also cleans up their relations.
+
+n        Args:
+            ticker: Stock ticker, e.g. "0700.HK"
+            older_than: ISO date string, e.g. "2025-01-01". Signals before this date are deleted.
+
+        Returns:
+            Number of deleted signals.
+        """
+        cypher = """
+        MATCH (c:Company {ticker: $ticker})-[r:HAS_SIGNAL]->(s:IndicatorSignal)
+        WHERE s.as_of_date < $cutoff
+        DETACH DELETE s
+        RETURN count(s) AS deleted
+        """
+        with self._driver.session(database=self._database) as session:
+            result = session.run(cypher, ticker=ticker, cutoff=older_than).single()
+            deleted = result["deleted"] if result else 0
+            logging.info("Deleted %d old IndicatorSignal for %s (before %s)", deleted, ticker, older_than)
+            return deleted
+
+    def clear_old_news(self, ticker: str, older_than: str) -> int:
+        """Delete NewsEvent + related Evidence/Claim/SourceDocument for a ticker older than cutoff.
+
+        Returns:
+            Number of deleted news events.
+        """
+        queries = [
+            """
+            MATCH (c:Company {ticker: $ticker})-[r:MENTIONED_IN]->(n:NewsEvent)
+            WHERE n.published_at < $cutoff
+            DETACH DELETE n
+            RETURN count(n) AS deleted
+            """,
+            """
+            MATCH (src:SourceDocument)
+            WHERE src.entity_id STARTS WITH ('source:news:' + $ticker + ':')
+              AND src.published_at < $cutoff
+            DETACH DELETE src
+            """,
+            """
+            MATCH (cl:Claim)
+            WHERE cl.entity_id STARTS WITH ('claim:news:' + $ticker + ':')
+              AND cl.as_of_date < $cutoff
+            DETACH DELETE cl
+            """,
+            """
+            MATCH (e:Evidence)
+            WHERE e.evidence_id STARTS WITH ('news:' + $ticker + ':')
+              AND e.published_at < $cutoff
+            DETACH DELETE e
+            """,
+        ]
+        total = 0
+        with self._driver.session(database=self._database) as session:
+            result = session.run(queries[0], ticker=ticker, cutoff=older_than).single()
+            total = result["deleted"] if result else 0
+            for q in queries[1:]:
+                session.run(q, ticker=ticker, cutoff=older_than)
+        logging.info("Deleted %d old NewsEvent for %s (before %s)", total, ticker, older_than)
+        return total
 
     def clear_all_generated_data(self) -> None:
         queries = [

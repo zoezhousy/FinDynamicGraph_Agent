@@ -107,6 +107,7 @@ def run_experiment_for_tickers(
     tickers: List[str],
     trade_dates: List[str],
     config: CollectionConfig,
+    experiment_start_date: datetime,
 ) -> pd.DataFrame:
     neo4j_uri = os.getenv("NEO4J_URI")
     neo4j_user = os.getenv("NEO4J_USER")
@@ -169,22 +170,31 @@ def run_experiment_for_tickers(
 
 
 
-                # Baselines
-                for baseline_fn in (
-                    baseline_no_kg_no_evidence,
-                    baseline_evidence_no_kg,
-                    baseline_static_kg,
-                ):
-                    baseline_decision = baseline_fn(ticker, trade_dt)
-                    baseline_bt = compute_trade_return(
-                        ohlcv,
-                        trade_date_str,
-                        baseline_decision["action"],
-                        bt_cfg,
-                    )
-                    results_rows.append(
-                        {**baseline_decision, **baseline_bt, "system": baseline_decision["baseline"]}
-                    )
+                # --- Baseline 1: no_kg_no_evidence ---
+                bl1 = baseline_no_kg_no_evidence(ticker, trade_dt)
+                bl1_bt = compute_trade_return(ohlcv, trade_date_str, bl1["action"], bt_cfg)
+                results_rows.append(
+                    {**bl1, **bl1_bt, "system": "no_kg_no_evidence"}
+                )
+
+                # --- Baseline 2: evidence_no_kg ---
+                bl2 = baseline_evidence_no_kg(ticker, trade_dt, data_root=config.output_root)
+                bl2_bt = compute_trade_return(ohlcv, trade_date_str, bl2["action"], bt_cfg)
+                results_rows.append(
+                    {**bl2, **bl2_bt, "system": "evidence_no_kg"}
+                )
+
+                # --- Baseline 3: static_kg ---
+                static_cutoff = datetime.fromisoformat(experiment_start_date)
+                bl3 = baseline_static_kg(
+                    ticker, trade_dt,
+                    kg_context=kg_ctx,
+                    static_cutoff=static_cutoff,
+                )
+                bl3_bt = compute_trade_return(ohlcv, trade_date_str, bl3["action"], bt_cfg)
+                results_rows.append(
+                    {**bl3, **bl3_bt, "system": "static_kg"}
+                )
     finally:
         kg_client.close()
         kg_store.close()
@@ -248,7 +258,7 @@ def main() -> None:
     print(f"Number of trade dates: {len(trade_dates)}")
     print("Sample trade dates:", trade_dates[:10])
 
-    df = run_experiment_for_tickers(cfg.tickers, trade_dates, cfg)
+    df = run_experiment_for_tickers(cfg.tickers, trade_dates, cfg, experiment_start_date)
 
     # Debug output
     print(df[["system", "ticker", "trade_date", "action", "trade_executed", "raw_return"]].head(50))

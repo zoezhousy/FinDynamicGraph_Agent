@@ -16,6 +16,7 @@ class CollectionConfig:
     end_date: str = "2025-12-31"
     news_limit_per_ticker: int = 10
     output_root: Path = Path("data/raw/market_news")
+    report_root: Path = Path("data/reports")
     log_file: Path = Path("data/logs/data_collection.log")
 
     # retry settings for data collection

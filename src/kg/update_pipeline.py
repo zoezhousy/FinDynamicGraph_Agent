@@ -470,6 +470,203 @@ def build_fundamentals_from_frame(
     return entities, evidences, relations
 
 
+def build_global_news_from_frame(
+    ticker: str, global_news: pd.DataFrame
+) -> Tuple[List[Entity], List[Evidence], List[Relation]]:
+    """Build KG nodes for global/macro news.
+
+    Same structure as ``build_news_from_frame`` but uses ``MacroNewsEvent``
+    label so they can be queried separately from ticker-specific news.
+    """
+    entities: List[Entity] = []
+    evidences: List[Evidence] = []
+    relations: List[Relation] = []
+
+    if "url" not in global_news.columns:
+        raise ValueError("Global news frame must include 'url' column.")
+
+    seen_urls = set()
+
+    for _, row in global_news.iterrows():
+        url = row.get("url")
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+
+        pub_time_raw = row.get("published_time")
+        published_at = _parse_dt(pub_time_raw)
+        as_of_date = published_at or datetime.utcnow()
+
+        title = row.get("title")
+        source_name = row.get("source")
+        content = row.get("content") or title or ""
+        raw_score = row.get("score")
+        try:
+            confidence = float(raw_score) if raw_score is not None else 0.5
+        except (ValueError, TypeError):
+            confidence = 0.5
+        # Guard against NaN
+        if confidence != confidence:  # NaN check
+            confidence = 0.5
+
+        content_hash = sha1(f"{url}|{title}|{content}".encode("utf-8")).hexdigest()[:16]
+
+        source_id = f"source:global:{ticker}:{content_hash}"
+        ev_id = f"global:{ticker}:{content_hash}"
+        claim_id = f"claim:global:{ticker}:{content_hash}"
+        news_ent_id = f"global_event:{ticker}:{content_hash}"
+
+        # 1. SourceDocument
+        entities.append(
+            Entity(
+                entity_id=source_id,
+                type="SourceDocument",
+                properties={
+                    "source_id": source_id,
+                    "source_type": "global_macro",
+                    "source_name": source_name,
+                    "url": url,
+                    "title": title,
+                    "published_at": published_at.isoformat() if published_at else None,
+                    "retrieved_at": datetime.utcnow().isoformat(),
+                    "content_hash": content_hash,
+                    "raw_text_preview": str(content)[:500],
+                },
+            )
+        )
+
+        # 2. Evidence
+        evidences.append(
+            Evidence(
+                evidence_id=ev_id,
+                source_type="global_macro",
+                source_name=source_name,
+                url=url,
+                title=title,
+                published_at=published_at,
+                extracted_text=str(content)[:2000],
+                confidence=confidence,
+            )
+        )
+
+        # 3. Claim
+        claim_text = f"Global macro news: {title}"
+        entities.append(
+            Entity(
+                entity_id=claim_id,
+                type="Claim",
+                properties={
+                    "claim_id": claim_id,
+                    "ticker": ticker,
+                    "claim_type": "macro",
+                    "text": claim_text,
+                    "polarity": "unknown",
+                    "confidence": confidence,
+                    "as_of_date": as_of_date.isoformat(),
+                    "valid_from": as_of_date.isoformat(),
+                    "valid_to": None,
+                    "evidence_ids": [ev_id],
+                },
+            )
+        )
+
+        # 4. NewsEvent (reuse same label for query simplicity)
+        entities.append(
+            Entity(
+                entity_id=news_ent_id,
+                type="NewsEvent",
+                properties={
+                    "ticker": ticker,
+                    "title": title,
+                    "source": source_name,
+                    "url": url,
+                    "published_at": published_at.isoformat() if published_at else None,
+                    "news_type": "global_macro",
+                    "claim_id": claim_id,
+                    "evidence_id": ev_id,
+                    "source_id": source_id,
+                },
+            )
+        )
+
+        # Company -> NewsEvent
+        relations.append(
+            Relation(
+                start_id=f"company:{ticker}",
+                end_id=news_ent_id,
+                type="MENTIONED_IN",
+                as_of_date=as_of_date,
+                confidence=confidence,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[ev_id],
+            )
+        )
+
+        # SourceDocument -> Evidence
+        relations.append(
+            Relation(
+                start_id=source_id,
+                end_id=ev_id,
+                type="CONTAINS_EVIDENCE",
+                as_of_date=as_of_date,
+                confidence=confidence,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[ev_id],
+            )
+        )
+
+        # Evidence -> Claim
+        relations.append(
+            Relation(
+                start_id=ev_id,
+                end_id=claim_id,
+                type="SUPPORTS_CLAIM",
+                as_of_date=as_of_date,
+                confidence=confidence,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[ev_id],
+            )
+        )
+
+        # Claim -> NewsEvent
+        relations.append(
+            Relation(
+                start_id=claim_id,
+                end_id=news_ent_id,
+                type="CLAIM_USED_BY",
+                as_of_date=as_of_date,
+                confidence=confidence,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[ev_id],
+            )
+        )
+
+        # NewsEvent -> Evidence
+        relations.append(
+            Relation(
+                start_id=news_ent_id,
+                end_id=ev_id,
+                type="SUPPORTED_BY",
+                as_of_date=as_of_date,
+                confidence=confidence,
+                direction=None,
+                valid_from=as_of_date,
+                valid_to=None,
+                evidence_ids=[ev_id],
+            )
+        )
+
+    return entities, evidences, relations
+
+
 def build_kg_batch_for_ticker(
     ticker: str, ohlcv: pd.DataFrame, news: pd.DataFrame
 ) -> KGBatch:

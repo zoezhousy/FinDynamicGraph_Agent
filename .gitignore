@@ -1,6 +1,7 @@
 .env
 
 /.venv
+/venv
 /__pycache__
 
 /.cursor
@@ -31,4 +32,12 @@
 */.pytest_cache/*/*/*/*/*/*/*/*
 */.pytest_cache/*/*/*/*/*/*/*/*/*
 
-/data/*
+/data/experiments
+/data/raw/market_news
+/data/logs
+
+AGENTS.md
+Claude.md
+
+*.csv
+/*_pdfs

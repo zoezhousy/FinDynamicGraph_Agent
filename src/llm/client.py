@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class LLMConfig:
@@ -84,11 +89,11 @@ class OpenAICompatibleClient:
             content = re.sub(r"^```\s*", "", content)
             content = re.sub(r"\s*```$", "", content)
 
+        # 记录 LLM 原始输出到文件
+        self._log_response(content)
+
         # 尝试直接解析
         try:
-            print("RAW LLM CONTENT:")
-            print(content)
-
             return json.loads(content)
         except json.JSONDecodeError:
             pass
@@ -102,4 +107,21 @@ class OpenAICompatibleClient:
                 pass
 
         raise ValueError(f"LLM did not return valid JSON. Raw content:\n{content}")
+
+    def _log_response(self, content: str) -> None:
+        """将 LLM 原始响应追加写入日志文件。"""
+        log_dir = Path("data/logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_path = log_dir / f"llm_responses_{today}.log"
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"\n{'='*60}\n[{timestamp}] Model: {self.config.model}\n{'='*60}\n{content}\n"
+
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except Exception as e:
+            logger.warning("Failed to write LLM response log: %s", e)
 

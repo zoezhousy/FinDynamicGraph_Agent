@@ -9,12 +9,13 @@ from dotenv import load_dotenv
 
 from src.agents.technical_agent import TechnicalAgent
 from src.collectors.fundamental_collector import FundamentalCollector
+from src.collectors.global_news_collector import GlobalNewsCollector
 from src.collectors.market_collector import MarketCollector
 from src.collectors.news_collector import NewsCollector
 from src.config import CollectionConfig
 from src.kg.schema import Entity
 from src.kg.store_neo4j import Neo4jKGStore
-from src.kg.update_pipeline import build_fundamentals_from_frame, build_news_from_frame, build_risk_events_from_frame
+from src.kg.update_pipeline import build_fundamentals_from_frame, build_global_news_from_frame, build_news_from_frame, build_risk_events_from_frame
 from src.utils.io import ensure_dir, save_parquet
 
 
@@ -25,6 +26,8 @@ def setup_logging(log_file: Path) -> None:
         format="%(asctime)s | %(levelname)s | %(message)s",
         handlers=[logging.FileHandler(log_file, encoding="utf-8"), logging.StreamHandler()],
     )
+    # Suppress noisy Neo4j driver notifications
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
 
 
 def _init_kg_store(config: CollectionConfig) -> Neo4jKGStore | None:
@@ -61,6 +64,7 @@ def build_company_entity(ticker: str) -> Entity:
 def run_collection(config: CollectionConfig) -> None:
     market_collector = MarketCollector(config)
     news_collector = NewsCollector(config)
+    global_news_collector = GlobalNewsCollector(config)
     fundamental_collector = FundamentalCollector(config)
     technical_agent = TechnicalAgent()
     kg_store = _init_kg_store(config)
@@ -73,6 +77,7 @@ def run_collection(config: CollectionConfig) -> None:
 
             ohlcv_df = None
             news_df = None
+            global_news_df = None
             fundamentals_df = None
 
             try:
@@ -86,6 +91,13 @@ def run_collection(config: CollectionConfig) -> None:
                 save_parquet(news_df, ticker_dir / "news_latest.parquet")
             except Exception as exc:
                 logging.exception("News collection failed for %s: %s", ticker, exc)
+
+            try:
+                global_news_df = global_news_collector.fetch_global_news(ticker=ticker, limit=50)
+                if not global_news_df.empty:
+                    save_parquet(global_news_df, ticker_dir / "global_news_latest.parquet")
+            except Exception as exc:
+                logging.exception("Global news collection failed for %s: %s", ticker, exc)
 
             if config.collect_fundamentals:
                 try:
@@ -138,6 +150,16 @@ def run_collection(config: CollectionConfig) -> None:
                     logging.info("News graph updated for ticker=%s", ticker)
                 except Exception as exc:
                     logging.exception("News KG update failed for %s: %s", ticker, exc)
+
+            if kg_store and global_news_df is not None and not global_news_df.empty:
+                try:
+                    gn_entities, gn_evidences, gn_relations = build_global_news_from_frame(ticker, global_news_df)
+                    kg_store.upsert_entities(gn_entities)
+                    kg_store.upsert_evidences(gn_evidences)
+                    kg_store.upsert_relations(gn_relations)
+                    logging.info("Global news graph updated for ticker=%s", ticker)
+                except Exception as exc:
+                    logging.exception("Global news KG update failed for %s: %s", ticker, exc)
 
             # Update Fundamental KG 
             if kg_store and fundamentals_df is not None:

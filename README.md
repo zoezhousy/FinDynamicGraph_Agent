@@ -1,7 +1,7 @@
 # FinDynamicGraph Agent
 Dissertation: Dynamic Evidence-Grounded Financial Knowledge Graph for Multi-Agent Simulated Trading
 
-### Milestone 1 finished
+### Milestone 2 partially implemented (See plan in Plan_in_Chinese.md)
 #### SourceDocument → Evidence → Claim → AgentAssessment → DecisionTrace → BacktestOutcome
 
 ## Current Neo4j-oriented MVP scope
@@ -60,6 +60,15 @@ python -m src.main_experiment
 ```
 
 Use the same `.env` values as above.
+
+<!-- 
+    if need to choose the version of Python
+    Command is
+    ```cmd
+    py -3.11 -m venv venv
+    .\venv\Scripts\Activate.ps1
+    ```
+ -->
 
 ## Outputs
 
