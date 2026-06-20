@@ -91,14 +91,31 @@ def technical_agent(subgraph: Dict[str, List[Dict[str, Any]]], ticker: str, trad
         stance = "bullish"
     elif score < -0.2:
         stance = "bearish"
+
+    # Build evidence_refs from real KG IDs (prefer evidence_id, fallback to entity_id)
+    evidence_refs: List[str] = []
+    factors: List[Dict[str, Any]] = []
+    for s in signals[:20]:
+        eid = s.get("evidence_id") or s.get("entity_id")
+        if eid:
+            evidence_refs.append(str(eid))
+        factors.append({
+            "name": str(s.get("name") or "technical_signal"),
+            "direction": str(s.get("direction") or "neutral"),
+            "weight": round(_safe_float(s.get("strength"), 0.5), 3),
+        })
+
+    # Overall balance factor
+    factors.insert(0, {"name": "technical_signal_balance", "direction": stance, "weight": round(abs(score), 3)})
+
     return AgentReport(
         role="technical",
         stance=stance,
         confidence=min(0.9, 0.3 + total * 0.05),
         score=score,
         summary=f"{bullish} bullish vs {bearish} bearish technical signals.",
-        evidence_refs=[str(s.get("entity_id") or s.get("name") or "") for s in signals[:20]],
-        factors=[{"name": "technical_signal_balance", "direction": stance, "weight": round(abs(score), 3)}],
+        evidence_refs=sorted(set(evidence_refs)),
+        factors=factors,
     )
 
 

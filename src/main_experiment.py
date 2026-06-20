@@ -23,7 +23,13 @@ from src.kg.schema import BacktestOutcome
 from src.kg.store_neo4j import Neo4jKGStore
 
 def load_ohlcv_from_disk(root: Path, ticker: str) -> pd.DataFrame:
-    path = root / ticker / "ohlcv_2021_2025.parquet"
+    primary = root / ticker / "ohlcv_2021_now.parquet"
+    fallback = root / ticker / "ohlcv_2021_2025.parquet"
+    path = primary if primary.exists() else fallback
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No OHLCV file found for {ticker}: tried {primary} and {fallback}"
+        )
     return pd.read_parquet(path)
 
 def generate_trade_dates(
@@ -107,7 +113,7 @@ def run_experiment_for_tickers(
     tickers: List[str],
     trade_dates: List[str],
     config: CollectionConfig,
-    experiment_start_date: datetime,
+    experiment_start_date: datetime | str,
 ) -> pd.DataFrame:
     neo4j_uri = os.getenv("NEO4J_URI")
     neo4j_user = os.getenv("NEO4J_USER")
@@ -185,7 +191,10 @@ def run_experiment_for_tickers(
                 )
 
                 # --- Baseline 3: static_kg ---
-                static_cutoff = datetime.fromisoformat(experiment_start_date)
+                if isinstance(experiment_start_date, str):
+                    static_cutoff = datetime.fromisoformat(experiment_start_date)
+                else:
+                    static_cutoff = experiment_start_date
                 bl3 = baseline_static_kg(
                     ticker, trade_dt,
                     kg_context=kg_ctx,

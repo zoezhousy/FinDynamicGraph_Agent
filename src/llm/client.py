@@ -98,7 +98,40 @@ class OpenAICompatibleClient:
         except json.JSONDecodeError:
             pass
 
-        # 提取第一个 {...} JSON 块
+        # 提取第一个完整 {...} JSON 块（按括号深度匹配）
+        start = content.find("{")
+        if start != -1:
+            depth = 0
+            in_string = False
+            escape_next = False
+            end = -1
+            for i in range(start, len(content)):
+                ch = content[i]
+                if escape_next:
+                    escape_next = False
+                    continue
+                if ch == "\\" and in_string:
+                    escape_next = True
+                    continue
+                if ch == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if end > start:
+                try:
+                    return json.loads(content[start:end])
+                except json.JSONDecodeError:
+                    pass
+
+        # 回退：贪婪正则
         match = re.search(r"\{.*\}", content, flags=re.DOTALL)
         if match:
             try:
