@@ -76,6 +76,33 @@ Use the same `.env` values as above.
 - `data/raw/market_news/<ticker>/news_latest.parquet`
 - `data/experiments/trades.parquet`
 
+## Export KG Graph Snapshot
+
+Export the knowledge graph state for a given ticker at a specific date:
+
+```bash
+python -m src.scripts.export_graph_snapshot \
+    --ticker 0700.HK \
+    --as-of 2025-03-01 \
+    --output data/experiments/snapshot_0700_2025-03-01.json
+```
+
+The output JSON contains:
+- `ticker`, `as_of_date`
+- `n_signals`, `n_news`, `n_fundamentals`, `n_risks`, `n_evidences`, `n_claims`
+- `top_signals` (ranked by strength)
+- `top_news` (most recent)
+- `evidence_refs` (all unique evidence_ids)
+- `fundamentals_summary`, `risks_summary`
+
+Compare snapshots across different dates to demonstrate that the same ticker
+has different graph states at different points in time:
+
+```bash
+python -m src.scripts.export_graph_snapshot --ticker 0700.HK --as-of 2025-01-01 --output data/experiments/snapshot_0700_jan.json
+python -m src.scripts.export_graph_snapshot --ticker 0700.HK --as-of 2025-06-01 --output data/experiments/snapshot_0700_jun.json
+```
+
 ## Notes
 
 - For local single-instance Neo4j, prefer `bolt://127.0.0.1:7687`.
