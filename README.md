@@ -1,7 +1,7 @@
 # FinDynamicGraph Agent
 Dissertation: Dynamic Evidence-Grounded Financial Knowledge Graph for Multi-Agent Simulated Trading
 
-### Milestone 2 partially implemented (See plan in Plan_in_Chinese.md)
+### Milestone 1 finished
 #### SourceDocument → Evidence → Claim → AgentAssessment → DecisionTrace → BacktestOutcome
 
 ## Current Neo4j-oriented MVP scope
@@ -61,47 +61,11 @@ python -m src.main_experiment
 
 Use the same `.env` values as above.
 
-<!-- 
-    if need to choose the version of Python
-    Command is
-    ```cmd
-    py -3.11 -m venv venv
-    .\venv\Scripts\Activate.ps1
-    ```
- -->
-
 ## Outputs
 
 - `data/raw/market_news/<ticker>/ohlcv_2021_now.parquet`
 - `data/raw/market_news/<ticker>/news_latest.parquet`
 - `data/experiments/trades.parquet`
-
-## Export KG Graph Snapshot
-
-Export the knowledge graph state for a given ticker at a specific date:
-
-```bash
-python -m src.scripts.export_graph_snapshot \
-    --ticker 0700.HK \
-    --as-of 2025-03-01 \
-    --output data/experiments/snapshot_0700_2025-03-01.json
-```
-
-The output JSON contains:
-- `ticker`, `as_of_date`
-- `n_signals`, `n_news`, `n_fundamentals`, `n_risks`, `n_evidences`, `n_claims`
-- `top_signals` (ranked by strength)
-- `top_news` (most recent)
-- `evidence_refs` (all unique evidence_ids)
-- `fundamentals_summary`, `risks_summary`
-
-Compare snapshots across different dates to demonstrate that the same ticker
-has different graph states at different points in time:
-
-```bash
-python -m src.scripts.export_graph_snapshot --ticker 0700.HK --as-of 2025-01-01 --output data/experiments/snapshot_0700_jan.json
-python -m src.scripts.export_graph_snapshot --ticker 0700.HK --as-of 2025-06-01 --output data/experiments/snapshot_0700_jun.json
-```
 
 ## Notes
 
@@ -129,8 +93,110 @@ the system supports:
 - initial backtest execution
 
 
-## Current Limitation 
-1. KG still relatively thin and currently dominated by technical signal nodes. 
-2. Evidence grounding mechanism is in inital level, but graph does not yet fully presented in all intended source -> claim -> decision chain
-3. The current decision logic is still simple
+## Temporal Divergence Proof
+
+Prove that the same ticker has different graph states at different `as_of_date` values.
+
+### Step 1: Export snapshots at two dates
+
+```bash
+# Snapshot at date A
+python -m src.scripts.export_graph_snapshot \
+    --ticker 0700.HK --as-of 2025-01-01 \
+    --output data/experiments/snapshot_0700_2025-01-01.json
+
+# Snapshot at date B
+python -m src.scripts.export_graph_snapshot \
+    --ticker 0700.HK --as-of 2025-03-01 \
+    --output data/experiments/snapshot_0700_2025-03-01.json
+```
+
+### Step 2: Diff the snapshots
+
+```bash
+python -m src.scripts.diff_snapshots \
+    --a data/experiments/snapshot_0700_2025-01-01.json \
+    --b data/experiments/snapshot_0700_2025-03-01.json
+```
+
+Output shows:
+- Node count changes (signals, news, fundamentals, risks, evidences, claims)
+- Added/removed signals, news, evidence, and claims between the two dates
+- Final verdict: IDENTICAL or DIFFERENT
+
+If DIFFERENT → temporal divergence is proven: the KG evolves over time for the same ticker.
+
+---
+
+## Reproducibility Workflow
+
+Full experiment protocol: [EXPERIMENT_PROTOCOL.md](EXPERIMENT_PROTOCOL.md)
+
+### 1. Data Collection
+
+```bash
+python -m src.main_collect
+```
+
+Collects OHLCV market data, news (Tavily), global news, and fundamentals for all three tickers. Writes raw parquet files to `data/raw/market_news/<ticker>/`. Also ingests data into the Neo4j knowledge graph if configured.
+
+### 2. Run Experiment
+
+```bash
+python -m src.main_experiment
+```
+
+Runs four systems (`no_kg_no_evidence`, `evidence_no_kg`, `static_kg`, `kg_dynamic`) across all tickers and trade dates. Outputs:
+- `data/experiments/trades_latest.csv`
+- `data/experiments/trades_latest.parquet`
+- `data/experiments/trades_<timestamp>.csv` (archive)
+- `data/experiments/trades_<timestamp>.parquet` (archive)
+
+### 3. Export Graph Snapshot
+
+```bash
+python -m src.scripts.export_graph_snapshot \
+    --ticker 0700.HK --as-of 2025-03-01 \
+    --output data/experiments/snapshot_0700_2025-03-01.json
+```
+
+Exports a point-in-time KG subgraph as JSON. Diff two snapshots to prove temporal divergence:
+
+```bash
+python -m src.scripts.diff_snapshots \
+    --a data/experiments/snapshot_0700_2025-01-01.json \
+    --b data/experiments/snapshot_0700_2025-03-01.json
+```
+
+### 4. Export Decision Trace
+
+```bash
+# JSON + Markdown case study
+python -m src.scripts.export_decision_trace \
+    --decision-id decision:0700.HK:2025-03-01 \
+    --output data/experiments/trace_0700_2025-03-01.json \
+    --markdown-output data/experiments/trace_0700_2025-03-01.md
+```
+
+Exports the full provenance chain: SourceDocument → Evidence → Claim → AgentAssessment → DecisionTrace → BacktestOutcome.
+
+### 5. Expected Output Files
+
+| Path | Format | Description |
+|---|---|---|
+| `data/experiments/trades_latest.csv` | CSV | Full experiment results |
+| `data/experiments/trades_latest.parquet` | Parquet | Same, columnar format |
+| `data/experiments/snapshot_<ticker>_<date>.json` | JSON | KG subgraph snapshot |
+| `data/experiments/trace_<ticker>_<date>.json` | JSON | Decision trace |
+| `data/experiments/trace_<ticker>_<date>.md` | Markdown | Human-readable case study |
+
+### 6. Known Limitations
+
+1. **KG density:** Currently dominated by technical signal nodes; news/fundamental nodes are sparser.
+2. **Evidence grounding:** SourceDocument → Evidence → Claim chain is partially implemented; some traces fall back to signal IDs.
+3. **Decision logic:** Simple weighted-average scoring with conflict detection; no sophisticated agent negotiation.
+4. **LLM dependency:** `kg_dynamic` system requires a working LLM API endpoint.
+5. **Neo4j dependency:** Experiments require a running Neo4j instance.
+6. **Data coverage:** Yahoo Finance may have gaps around HK holidays; missing dates are handled gracefully.
+7. **Backtest realism:** No slippage, volume constraints, or market impact modeling. Transaction cost is a flat 5 bp per side.
 

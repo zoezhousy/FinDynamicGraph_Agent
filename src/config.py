@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import List
 
@@ -13,7 +14,7 @@ class CollectionConfig:
         default_factory=lambda: ["0005.HK", "0700.HK", "1299.HK"]
     )
     start_date: str = "2021-01-01"
-    end_date: str = "2025-12-31"
+    end_date: str = field(default_factory=lambda: date.today().isoformat())
     news_limit_per_ticker: int = 10
     output_root: Path = Path("data/raw/market_news")
     report_root: Path = Path("data/reports")

@@ -16,20 +16,17 @@ from src.eval.baselines import (
     baseline_no_kg_no_evidence,
     baseline_static_kg,
 )
-from src.eval.metrics import directional_accuracy, summarize_returns
+from src.eval.metrics import directional_accuracy, summarize_returns, full_summary_by_system
 from src.kg.query import KGQueryClient
 from src.sim.backtest import BacktestConfig, compute_trade_return
 from src.kg.schema import BacktestOutcome
 from src.kg.store_neo4j import Neo4jKGStore
 
 def load_ohlcv_from_disk(root: Path, ticker: str) -> pd.DataFrame:
-    primary = root / ticker / "ohlcv_2021_now.parquet"
-    fallback = root / ticker / "ohlcv_2021_2025.parquet"
-    path = primary if primary.exists() else fallback
+    # Try both naming conventions
+    path = root / ticker / "ohlcv_2021_now.parquet"
     if not path.exists():
-        raise FileNotFoundError(
-            f"No OHLCV file found for {ticker}: tried {primary} and {fallback}"
-        )
+        path = root / ticker / "ohlcv_2021_2025.parquet"
     return pd.read_parquet(path)
 
 def generate_trade_dates(
@@ -191,10 +188,7 @@ def run_experiment_for_tickers(
                 )
 
                 # --- Baseline 3: static_kg ---
-                if isinstance(experiment_start_date, str):
-                    static_cutoff = datetime.fromisoformat(experiment_start_date)
-                else:
-                    static_cutoff = experiment_start_date
+                static_cutoff = datetime.fromisoformat(experiment_start_date)
                 bl3 = baseline_static_kg(
                     ticker, trade_dt,
                     kg_context=kg_ctx,
@@ -252,7 +246,7 @@ def main() -> None:
     cfg = CollectionConfig()
     # ===== Experiment configuration =====
     experiment_start_date = "2025-01-01"
-    experiment_end_date = "2026-04-30"
+    experiment_end_date = datetime.now().strftime("%Y-%m-%d")
     experiment_mode = "monthly" # daily / weekly / monthly
     # ====================================
 
@@ -267,7 +261,7 @@ def main() -> None:
     print(f"Number of trade dates: {len(trade_dates)}")
     print("Sample trade dates:", trade_dates[:10])
 
-    df = run_experiment_for_tickers(cfg.tickers, trade_dates, cfg, experiment_start_date)
+    df = run_experiment_for_tickers(cfg.tickers, trade_dates, cfg, experiment_start_date=experiment_start_date)
 
     # Debug output
     print(df[["system", "ticker", "trade_date", "action", "trade_executed", "raw_return"]].head(50))
@@ -282,33 +276,10 @@ def main() -> None:
         print("\nDecision debug sample:")
         print(df[cols_for_decision_debug].head(20))
 
-    # Summary without pandas FutureWarning
-    summary_rows = []
-    da_rows = []
-
-    for system_name, group in df.groupby("system"):
-        summary_series = summarize_returns(group)
-        summary_series.name = system_name
-        summary_rows.append(summary_series)
-
-        da_rows.append(
-            {
-                "system": system_name,
-                "directional_accuracy": directional_accuracy(group),
-            }
-        )
-
-    summary = pd.DataFrame(summary_rows)
-    if not summary.empty:
-        summary.index.name = "system"
-
-    da = pd.DataFrame(da_rows).set_index("system") if da_rows else pd.DataFrame()
-
-    print("\nReturn summary by system:")
-    print(summary)
-
-    print("\nDirectional accuracy by system:")
-    print(da)
+    # Full summary table
+    summary = full_summary_by_system(df)
+    print("\n=== Experiment Summary by System ===")
+    print(summary.to_string())
 
 if __name__ == "__main__":
     main()
