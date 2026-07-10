@@ -4,6 +4,15 @@ from typing import Iterable, List
 
 import pandas as pd
 
+from src.eval.grounding import (
+    citation_precision,
+    claim_coverage,
+    compute_grounding_metrics,
+    evidence_coverage,
+    stale_evidence_rate,
+    unsupported_claim_rate,
+)
+
 
 def directional_accuracy(trades: pd.DataFrame) -> float:
     if "raw_return" not in trades.columns or "action" not in trades.columns:
@@ -75,10 +84,14 @@ def mean_stale_evidence_count(trades: pd.DataFrame) -> float:
 
 
 def full_summary_by_system(trades: pd.DataFrame) -> pd.DataFrame:
-    """Compute all metrics grouped by system."""
+    """Compute all metrics grouped by system.
+
+    Includes trade metrics, grounding metrics, and evidence freshness.
+    """
     rows = []
     for system_name, group in trades.groupby("system"):
         ret = summarize_returns(group)
+        gnd = compute_grounding_metrics(group)
         row = {
             "system": system_name,
             "n_decisions": len(group),
@@ -93,6 +106,11 @@ def full_summary_by_system(trades: pd.DataFrame) -> pd.DataFrame:
             "mean_conflict_level": mean_conflict_level(group),
             "mean_fresh_evidence": mean_fresh_evidence_count(group),
             "mean_stale_evidence": mean_stale_evidence_count(group),
+            "evidence_coverage": gnd["evidence_coverage"],
+            "citation_precision": gnd["citation_precision"],
+            "claim_coverage": gnd["claim_coverage"],
+            "unsupported_claim_rate": gnd["unsupported_claim_rate"],
+            "stale_evidence_rate": gnd["stale_evidence_rate"],
         }
         rows.append(row)
 
@@ -100,4 +118,3 @@ def full_summary_by_system(trades: pd.DataFrame) -> pd.DataFrame:
     if not df.empty:
         df = df.set_index("system")
     return df
-

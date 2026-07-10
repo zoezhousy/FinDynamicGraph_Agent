@@ -20,6 +20,7 @@ class LLMConfig:
     model: str
     timeout_seconds: int = 60
     temperature: float = 0.2
+    max_tokens: int = 8192
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -28,6 +29,7 @@ class LLMConfig:
         model = os.getenv("LLM_MODEL", "")
         timeout_seconds = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
         temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS", "8192"))
         if not api_base or not api_key or not model:
             raise ValueError("Missing LLM_API_BASE, LLM_API_KEY, or LLM_MODEL in environment.")
         return cls(
@@ -36,6 +38,7 @@ class LLMConfig:
             model=model,
             timeout_seconds=timeout_seconds,
             temperature=temperature,
+            max_tokens=max_tokens,
         )
 
 class OpenAICompatibleClient:
@@ -57,6 +60,8 @@ class OpenAICompatibleClient:
             "Content-Type": "application/json",
         }
 
+        payload["max_tokens"] = self.config.max_tokens
+
         response = requests.post(
             url,
             headers=headers,
@@ -66,7 +71,18 @@ class OpenAICompatibleClient:
         response.raise_for_status()
         data = response.json()
 
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+        content = message.get("content") or ""
+
+        # Reasoning models (DeepSeek) may return useful text in reasoning_content
+        if (not content or not str(content).strip()) and message.get("reasoning_content"):
+            reasoning = str(message["reasoning_content"]).strip()
+            # Try to extract JSON from reasoning output
+            json_match = re.search(r"\{.*\}", reasoning, flags=re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+            else:
+                content = reasoning
 
         if isinstance(content, list):
             text_parts = []
@@ -98,40 +114,7 @@ class OpenAICompatibleClient:
         except json.JSONDecodeError:
             pass
 
-        # 提取第一个完整 {...} JSON 块（按括号深度匹配）
-        start = content.find("{")
-        if start != -1:
-            depth = 0
-            in_string = False
-            escape_next = False
-            end = -1
-            for i in range(start, len(content)):
-                ch = content[i]
-                if escape_next:
-                    escape_next = False
-                    continue
-                if ch == "\\" and in_string:
-                    escape_next = True
-                    continue
-                if ch == '"' and not escape_next:
-                    in_string = not in_string
-                    continue
-                if in_string:
-                    continue
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end = i + 1
-                        break
-            if end > start:
-                try:
-                    return json.loads(content[start:end])
-                except json.JSONDecodeError:
-                    pass
-
-        # 回退：贪婪正则
+        # 提取第一个 {...} JSON 块
         match = re.search(r"\{.*\}", content, flags=re.DOTALL)
         if match:
             try:
@@ -139,7 +122,73 @@ class OpenAICompatibleClient:
             except json.JSONDecodeError:
                 pass
 
+        # Last resort: try to repair truncated JSON
+        repaired = self._try_repair_json(content)
+        if repaired is not None:
+            logger.warning("JSON was truncated; repaired successfully.")
+            return repaired
+
         raise ValueError(f"LLM did not return valid JSON. Raw content:\n{content}")
+
+    @staticmethod
+    def _try_repair_json(content: str) -> Dict[str, Any] | None:
+        """Attempt to repair truncated JSON by closing open brackets/strings."""
+        # Find the outermost { ... }
+        start = content.find("{")
+        if start == -1:
+            return None
+        s = content[start:]
+
+        # Count unmatched brackets
+        depth = 0
+        in_string = False
+        escape_next = False
+        last_close = -1
+        for i, ch in enumerate(s):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\':
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    last_close = i
+                    break
+
+        if last_close > 0:
+            # Already valid JSON (might have trailing garbage)
+            try:
+                return json.loads(s[:last_close + 1])
+            except json.JSONDecodeError:
+                pass
+
+        # Truncated: close open string, close open arrays/objects
+        patched = s.rstrip()
+        if in_string:
+            patched += '"'
+        # Close remaining objects/arrays (depth > 0)
+        while depth > 0:
+            patched += '}'
+            depth -= 1
+        # Also close any open arrays
+        bracket_count = patched.count('[') - patched.count(']')
+        while bracket_count > 0:
+            patched += ']'
+            bracket_count -= 1
+
+        try:
+            return json.loads(patched)
+        except json.JSONDecodeError:
+            return None
 
     def _log_response(self, content: str) -> None:
         """将 LLM 原始响应追加写入日志文件。"""

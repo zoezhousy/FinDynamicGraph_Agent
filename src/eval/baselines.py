@@ -229,6 +229,7 @@ def baseline_evidence_no_kg(
         score=score,
         summary=summary,
         evidence_refs=[],
+        claim_refs=[],
         factors=factors,
     )
 

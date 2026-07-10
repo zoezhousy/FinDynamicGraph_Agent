@@ -41,3 +41,6 @@ Claude.md
 
 *.csv
 /*_pdfs
+
+/data/*
+/.venv-linux

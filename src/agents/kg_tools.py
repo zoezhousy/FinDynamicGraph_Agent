@@ -13,3 +13,6 @@ class KGAgentContext:
     def load_subgraph(self, ticker: str, trade_date: datetime) -> Dict[str, List[Dict[str, Any]]]:
         return self.query_client.get_ticker_subgraph(ticker, trade_date)
 
+    def load_snapshot_summary(self, ticker: str, trade_date: datetime) -> Dict[str, Any]:
+        return self.query_client.get_snapshot_summary(ticker, trade_date)
+

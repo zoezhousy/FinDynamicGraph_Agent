@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -145,7 +145,12 @@ class GlobalNewsCollector:
                 summary = article.get("summary", "")
                 source = article.get("publisher", "Unknown")
                 url = article.get("link", "")
-                pub_date_str = ""
+                # yfinance Search returns providerPublishTime as unix timestamp
+                pub_ts = article.get("providerPublishTime")
+                if pub_ts and isinstance(pub_ts, (int, float)) and pub_ts > 0:
+                    pub_date_str = datetime.fromtimestamp(pub_ts, tz=timezone.utc).isoformat()
+                else:
+                    pub_date_str = ""
 
             rows.append(
                 {

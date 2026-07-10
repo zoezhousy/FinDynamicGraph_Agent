@@ -26,8 +26,23 @@ def build_company_entity(ticker: str, name: str | None = None) -> Entity:
 # build technical indicator signal entities from ohlcv frame
 def build_indicator_entities_from_ohlcv(
     ticker: str, ohlcv: pd.DataFrame
-) -> Tuple[List[Entity], List[Relation]]:
+) -> Tuple[List[Entity], List[Evidence], List[Relation]]:
+    """Build technical indicator signal entities with full evidence chain.
+
+    Output structure:
+
+    Company
+        -[:HAS_SIGNAL]->
+    IndicatorSignal
+        -[:SUPPORTED_BY]->
+    Evidence
+        -[:SUPPORTS_CLAIM]->
+    Claim
+        -[:CLAIM_USED_BY]->
+    IndicatorSignal
+    """
     entities: List[Entity] = []
+    evidences: List[Evidence] = []
     relations: List[Relation] = []
 
     if "date" not in ohlcv.columns or "close" not in ohlcv.columns:
@@ -56,8 +71,69 @@ def build_indicator_entities_from_ohlcv(
         else:
             continue
 
-        sig_id = f"signal:{ticker}:{signal_name}:{date.date().isoformat()}"
+        pct_diff = (price - ma) / ma
+        stable_hash = sha1(
+            f"{ticker}|{signal_name}|{price}|{ma}|{date.date()}".encode("utf-8")
+        ).hexdigest()[:16]
 
+        sig_id = f"signal:{ticker}:{signal_name}:{date.date().isoformat()}"
+        evidence_id = f"tech_evidence:{ticker}:{signal_name}:{stable_hash}"
+        claim_id = f"claim:technical:{ticker}:{signal_name}:{stable_hash}"
+
+        strength = min(0.9, 0.6 + abs(pct_diff) * 5)
+
+        # Build claim text
+        if direction == "bullish":
+            claim_text = (
+                f"{ticker} close price {price:.2f} is above MA20 {ma:.2f} "
+                f"by {abs(pct_diff) * 100:.2f}%, indicating a bullish technical signal."
+            )
+        else:
+            claim_text = (
+                f"{ticker} close price {price:.2f} is below MA20 {ma:.2f} "
+                f"by {abs(pct_diff) * 100:.2f}%, indicating a bearish technical signal."
+            )
+
+        evidence_text = (
+            f"Technical data for {ticker} on {date.date()}: "
+            f"close={price:.2f}, MA20={ma:.2f}, pct_diff={pct_diff:.4f} ({pct_diff * 100:.2f}%)."
+        )
+
+        # 1. Evidence node
+        evidences.append(
+            Evidence(
+                evidence_id=evidence_id,
+                source_type="technical",
+                source_name="ma20_crossover",
+                url=None,
+                title=f"{ticker} {signal_name}",
+                published_at=date,
+                extracted_text=evidence_text,
+                confidence=round(strength, 3),
+            )
+        )
+
+        # 2. Claim node
+        entities.append(
+            Entity(
+                entity_id=claim_id,
+                type="Claim",
+                properties={
+                    "claim_id": claim_id,
+                    "ticker": ticker,
+                    "claim_type": "technical",
+                    "text": claim_text,
+                    "polarity": "supports" if direction == "bullish" else "contradicts",
+                    "confidence": round(strength, 3),
+                    "as_of_date": date.isoformat(),
+                    "valid_from": date.isoformat(),
+                    "valid_to": None,
+                    "evidence_ids": [evidence_id],
+                },
+            )
+        )
+
+        # 3. IndicatorSignal node
         entities.append(
             Entity(
                 entity_id=sig_id,
@@ -67,29 +143,76 @@ def build_indicator_entities_from_ohlcv(
                     "name": signal_name,
                     "signal_type": "technical",
                     "direction": direction,
-                    "strength": 0.7,
+                    "strength": round(strength, 3),
                     "price": price,
-                    "ma20": ma,
+                    "ma20": round(ma, 4),
+                    "pct_diff": round(pct_diff, 4),
                     "as_of_date": date.isoformat(),
+                    "evidence_id": evidence_id,
+                    "claim_id": claim_id,
                 },
             )
         )
 
+        # 4. Relations
+        # Company -> IndicatorSignal
         relations.append(
             Relation(
                 start_id=f"company:{ticker}",
                 end_id=sig_id,
                 type="HAS_SIGNAL",
                 as_of_date=date,
-                confidence=0.7,
+                confidence=round(strength, 3),
                 direction=direction,
                 valid_from=date,
                 valid_to=None,
-                evidence_ids=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+        # IndicatorSignal -> Evidence
+        relations.append(
+            Relation(
+                start_id=sig_id,
+                end_id=evidence_id,
+                type="SUPPORTED_BY",
+                as_of_date=date,
+                confidence=round(strength, 3),
+                direction=None,
+                valid_from=date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+        # Evidence -> Claim
+        relations.append(
+            Relation(
+                start_id=evidence_id,
+                end_id=claim_id,
+                type="SUPPORTS_CLAIM",
+                as_of_date=date,
+                confidence=round(strength, 3),
+                direction=None,
+                valid_from=date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
+            )
+        )
+        # Claim -> IndicatorSignal
+        relations.append(
+            Relation(
+                start_id=claim_id,
+                end_id=sig_id,
+                type="CLAIM_USED_BY",
+                as_of_date=date,
+                confidence=round(strength, 3),
+                direction=None,
+                valid_from=date,
+                valid_to=None,
+                evidence_ids=[evidence_id],
             )
         )
 
-    return entities, relations
+    return entities, evidences, relations
 
 # build news from news frame
 def build_news_from_frame(
@@ -133,7 +256,10 @@ def build_news_from_frame(
         title = row.get("title")
         source_name = row.get("source")
         content = row.get("content") or title or ""
-        confidence = float(row.get("score") or 0.6)
+        
+        _raw_score = row.get("score")
+        confidence = float(_raw_score) if _raw_score is not None and _raw_score == _raw_score else 0.6
+
 
         content_hash = sha1(f"{url}|{title}|{content}".encode("utf-8")).hexdigest()[:16]
 
@@ -177,6 +303,7 @@ def build_news_from_frame(
 
         # 3. Claim node
         claim_text = _build_news_claim_text(ticker=ticker, title=title, content=content)
+        news_polarity = _classify_news_polarity(title, content)
         entities.append(
             Entity(
                 entity_id=claim_id,
@@ -186,7 +313,7 @@ def build_news_from_frame(
                     "ticker": ticker,
                     "claim_type": "news",
                     "text": claim_text,
-                    "polarity": "unknown",
+                    "polarity": news_polarity,
                     "confidence": confidence,
                     "as_of_date": as_of_date.isoformat(),
                     "valid_from": as_of_date.isoformat(),
@@ -551,6 +678,7 @@ def build_global_news_from_frame(
 
         # 3. Claim
         claim_text = f"Global macro news: {title}"
+        macro_polarity = _classify_news_polarity(title, content)
         entities.append(
             Entity(
                 entity_id=claim_id,
@@ -560,7 +688,7 @@ def build_global_news_from_frame(
                     "ticker": ticker,
                     "claim_type": "macro",
                     "text": claim_text,
-                    "polarity": "unknown",
+                    "polarity": macro_polarity,
                     "confidence": confidence,
                     "as_of_date": as_of_date.isoformat(),
                     "valid_from": as_of_date.isoformat(),
@@ -671,10 +799,11 @@ def build_kg_batch_for_ticker(
     ticker: str, ohlcv: pd.DataFrame, news: pd.DataFrame
 ) -> KGBatch:
     company = build_company_entity(ticker)
-    sig_entities, sig_relations = build_indicator_entities_from_ohlcv(ticker, ohlcv)
-    news_entities, evidences, news_relations = build_news_from_frame(ticker, news)
+    sig_entities, sig_evidences, sig_relations = build_indicator_entities_from_ohlcv(ticker, ohlcv)
+    news_entities, news_evidences, news_relations = build_news_from_frame(ticker, news)
 
     entities = [company, *sig_entities, *news_entities]
+    evidences = [*sig_evidences, *news_evidences]
     relations = [*sig_relations, *news_relations]
 
     return KGBatch(entities=entities, evidences=evidences, relations=relations)
@@ -923,6 +1052,42 @@ def build_risk_events_from_frame(
 
     return entities, evidences, relations
 
+# ── News polarity classifier ──
+_POSITIVE_KEYWORDS = {
+    "positive", "growth", "profit", "beat", "upgrade", "partnership",
+    "approval", "record", "strong", "expansion", "recovery", "gain",
+    "rise", "surge", "rally", "outperform", "bullish", "boost",
+    "momentum", "breakthrough", "success", "improve", "exceed",
+}
+
+_NEGATIVE_KEYWORDS = {
+    "loss", "decline", "investigation", "downgrade", "lawsuit",
+    "risk", "weak", "miss", "warning", "fall", "drop", "cut",
+    "bearish", "crash", "plunge", "slump", "recession", "default",
+    "fraud", "penalty", "fine", "bankrupt", "layoff", "recall",
+    "deficit", "debt", "warning", "concern", "uncertainty",
+}
+
+
+def _classify_news_polarity(title: str | None, content: str | None) -> str:
+    """Rule-based news polarity classifier.
+
+    Returns 'supports' (positive), 'contradicts' (negative), or 'neutral'.
+    """
+    text = f"{title or ''} {content or ''}".lower()
+    if not text.strip():
+        return "neutral"
+
+    positive_hits = sum(1 for kw in _POSITIVE_KEYWORDS if kw in text)
+    negative_hits = sum(1 for kw in _NEGATIVE_KEYWORDS if kw in text)
+
+    if positive_hits > negative_hits:
+        return "supports"
+    elif negative_hits > positive_hits:
+        return "contradicts"
+    return "neutral"
+
+
 def _build_news_claim_text(ticker: str, title: object, content: object) -> str:
     title_text = str(title or "").strip()
     content_text = str(content or "").strip()
@@ -1120,3 +1285,155 @@ def _get_fundamental_numeric(metric_map: dict[str, object], metric: str) -> floa
         return None
 
     return None
+
+
+# ── Contradiction / Conflict detection helpers ─────────────────────────
+
+_POLARITY_OPPOSITES: dict[str, set[str]] = {
+    "supports": {"contradicts"},
+    "contradicts": {"supports"},
+}
+
+
+def detect_contradictory_claims(
+    new_claims: list[Entity],
+    existing_claims: list[Entity],
+) -> list[tuple[str, str, datetime]]:
+    """Compare new claims against existing ones to find contradictions.
+
+    Returns list of (new_claim_id, existing_claim_id, as_of_date) tuples where
+    the new claim contradicts an existing active claim with the same ticker and
+    claim_type.
+    """
+    conflicts: list[tuple[str, str, datetime]] = []
+
+    existing_by_key: dict[tuple[str, str], list[Entity]] = {}
+    for c in existing_claims:
+        props = c.properties or {}
+        ticker = props.get("ticker", "")
+        claim_type = props.get("claim_type", "")
+        if props.get("is_active", True):
+            existing_by_key.setdefault((ticker, claim_type), []).append(c)
+
+    for new_claim in new_claims:
+        new_props = new_claim.properties or {}
+        new_polarity = new_props.get("polarity", "unknown")
+        new_ticker = new_props.get("ticker", "")
+        new_type = new_props.get("claim_type", "")
+        opposing = _POLARITY_OPPOSITES.get(new_polarity, set())
+
+        for existing in existing_by_key.get((new_ticker, new_type), []):
+            ex_props = existing.properties or {}
+            ex_polarity = ex_props.get("polarity", "unknown")
+            if ex_polarity in opposing:
+                as_of = _parse_dt(new_props.get("as_of_date")) or datetime.utcnow()
+                conflicts.append((
+                    new_claim.entity_id,
+                    existing.entity_id,
+                    as_of,
+                ))
+
+    return conflicts
+
+
+def build_conflict_relations(
+    conflicts: list[tuple[str, str, datetime]],
+) -> list[Relation]:
+    """Build CONFLICTS_WITH relations from detected contradictions."""
+    relations: list[Relation] = []
+    for new_id, existing_id, as_of in conflicts:
+        relations.append(
+            Relation(
+                start_id=new_id,
+                end_id=existing_id,
+                type="CONFLICTS_WITH",
+                as_of_date=as_of,
+                confidence=0.8,
+                direction=None,
+                valid_from=as_of,
+                valid_to=None,
+                is_active=True,
+            )
+        )
+        relations.append(
+            Relation(
+                start_id=existing_id,
+                end_id=new_id,
+                type="CONFLICTS_WITH",
+                as_of_date=as_of,
+                confidence=0.8,
+                direction=None,
+                valid_from=as_of,
+                valid_to=None,
+                is_active=True,
+            )
+        )
+    return relations
+
+
+def build_supersedes_relations(
+    new_claims: list[Entity],
+    existing_claims: list[Entity],
+) -> list[Relation]:
+    """Build SUPERSEDES relations when a new claim updates an old one with same polarity.
+
+    When a new claim has the same (ticker, claim_type, polarity) as an existing
+    claim and shares overlapping evidence, the new one supersedes the old.
+    """
+    relations: list[Relation] = []
+
+    existing_by_key: dict[tuple[str, str, str], list[Entity]] = {}
+    for c in existing_claims:
+        props = c.properties or {}
+        key = (props.get("ticker", ""), props.get("claim_type", ""), props.get("polarity", ""))
+        if props.get("is_active", True):
+            existing_by_key.setdefault(key, []).append(c)
+
+    for new_claim in new_claims:
+        new_props = new_claim.properties or {}
+        key = (
+            new_props.get("ticker", ""),
+            new_props.get("claim_type", ""),
+            new_props.get("polarity", ""),
+        )
+        new_ev = set(new_props.get("evidence_ids", []))
+        as_of = _parse_dt(new_props.get("as_of_date")) or datetime.utcnow()
+
+        for existing in existing_by_key.get(key, []):
+            ex_props = existing.properties or {}
+            ex_ev = set(ex_props.get("evidence_ids", []))
+            if new_ev & ex_ev:
+                relations.append(
+                    Relation(
+                        start_id=new_claim.entity_id,
+                        end_id=existing.entity_id,
+                        type="SUPERSEDES",
+                        as_of_date=as_of,
+                        confidence=0.9,
+                        direction=None,
+                        valid_from=as_of,
+                        valid_to=None,
+                        is_active=True,
+                    )
+                )
+    return relations
+
+
+def mark_expired_entities(
+    entities: list[Entity],
+    valid_to: datetime,
+) -> list[Entity]:
+    """Return copies of entities with is_active=False and valid_to set."""
+    expired = []
+    for e in entities:
+        props = dict(e.properties or {})
+        props["is_active"] = False
+        props["valid_to"] = valid_to.isoformat()
+        expired.append(
+            Entity(
+                entity_id=e.entity_id,
+                type=e.type,
+                properties=props,
+            )
+        )
+    return expired

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Iterable
 
 from neo4j import GraphDatabase, basic_auth
@@ -26,6 +27,8 @@ _ALLOWED_REL_TYPES = {
     "CONTRADICTS_CLAIM",
     "CLAIM_USED_BY",
     "HAS_OUTCOME",
+    "CONFLICTS_WITH",
+    "SUPERSEDES",
 }
 
 
@@ -449,6 +452,201 @@ n        Args:
                 raw_return=outcome.raw_return,
                 trade_executed=outcome.trade_executed,
                 direction_outcome=outcome.direction_outcome,
+            )
+
+    # ── Temporal / Dynamic KG methods ─────────────────────────────────────
+
+    def upsert_entities_temporal(self, entities: Iterable[Entity]) -> list[str]:
+        """Upsert entities with temporal awareness.
+
+        MERGE on entity_id. If node already exists and is_active, bump version
+        and update properties.  Returns list of entity_ids that were newly created
+        (not already present in graph).
+        """
+        by_label: dict[str, list[dict]] = {}
+        for entity in entities:
+            now_iso = (entity.properties.get("ingested_at") or datetime.utcnow()).isoformat()
+            props = {
+                "entity_id": entity.entity_id,
+                "entity_type": entity.type,
+                "ingested_at": now_iso,
+                "is_active": True,
+                **(entity.properties or {}),
+            }
+            # Ensure temporal fields exist
+            props.setdefault("version", 1)
+            props.setdefault("valid_from", props.get("as_of_date", now_iso))
+            props.setdefault("valid_to", None)
+            props.setdefault("supersedes_id", None)
+            by_label.setdefault(entity.type, []).append(props)
+
+        created_ids: list[str] = []
+        with self._driver.session(database=self._database) as session:
+            for label, rows in by_label.items():
+                if not rows:
+                    continue
+                query = f"""
+                UNWIND $rows AS row
+                MERGE (e:{label} {{entity_id: row.entity_id}})
+                ON CREATE SET e += row, e.version = 1
+                ON MATCH SET e += row,
+                    e.version = CASE WHEN e.is_active = false THEN 1 ELSE coalesce(e.version, 1) + 1 END,
+                    e.ingested_at = row.ingested_at
+                """
+                session.run(query, rows=rows)
+        return created_ids
+
+    def upsert_evidences_temporal(self, evidences: Iterable[Evidence]) -> None:
+        """Upsert evidences with temporal fields."""
+        rows = []
+        for evidence in evidences:
+            data = evidence.model_dump()
+            now_iso = (data.get("ingested_at") or datetime.utcnow()).isoformat()
+            if data["published_at"] is not None:
+                data["published_at"] = data["published_at"].isoformat()
+            data["entity_id"] = evidence.evidence_id
+            data["entity_type"] = "Evidence"
+            data.setdefault("ingested_at", now_iso)
+            data.setdefault("valid_from", data.get("published_at", now_iso))
+            data.setdefault("valid_to", None)
+            data.setdefault("supersedes_id", None)
+            data.setdefault("is_active", True)
+            data.setdefault("version", 1)
+            rows.append(data)
+
+        if not rows:
+            return
+
+        cypher = """
+        UNWIND $rows AS row
+        MERGE (e:Evidence {evidence_id: row.evidence_id})
+        ON CREATE SET e += row, e.version = 1
+        ON MATCH SET e += row,
+            e.version = CASE WHEN e.is_active = false THEN 1 ELSE coalesce(e.version, 1) + 1 END,
+            e.ingested_at = row.ingested_at
+        """
+        with self._driver.session(database=self._database) as session:
+            session.run(cypher, rows=rows)
+
+    def upsert_relations_temporal(self, relations: Iterable[Relation]) -> None:
+        """Upsert relations with temporal fields."""
+        grouped: dict[str, list[dict]] = {}
+        for relation in relations:
+            rel_type = relation.type
+            if rel_type not in _ALLOWED_REL_TYPES:
+                raise ValueError(f"Unsupported relationship type: {rel_type}")
+            data = relation.model_dump()
+            now_iso = (data.get("ingested_at") or datetime.utcnow()).isoformat()
+            for key in ("as_of_date", "valid_from", "valid_to"):
+                if data.get(key) is not None:
+                    data[key] = data[key].isoformat()
+            data.setdefault("ingested_at", now_iso)
+            data.setdefault("supersedes_id", None)
+            data.setdefault("is_active", True)
+            data.setdefault("version", 1)
+            grouped.setdefault(rel_type, []).append(data)
+
+        with self._driver.session(database=self._database) as session:
+            for rel_type, rows in grouped.items():
+                if not rows:
+                    continue
+                query = f"""
+                UNWIND $rows AS row
+                MATCH (s {{entity_id: row.start_id}})
+                MATCH (t {{entity_id: row.end_id}})
+                MERGE (s)-[r:{rel_type} {{as_of_date: row.as_of_date}}]->(t)
+                SET r.confidence = row.confidence,
+                    r.direction = row.direction,
+                    r.valid_from = row.valid_from,
+                    r.valid_to = row.valid_to,
+                    r.evidence_ids = row.evidence_ids,
+                    r.version = coalesce(r.version, 0) + 1,
+                    r.ingested_at = row.ingested_at,
+                    r.is_active = true
+                """
+                session.run(query, rows=rows)
+
+    def expire_signals_for_ticker(self, ticker: str, cutoff_date: str) -> int:
+        """Set valid_to on signals older than cutoff_date instead of deleting.
+
+        Returns count of expired signals.
+        """
+        cypher = """
+        MATCH (c:Company {ticker: $ticker})-[r:HAS_SIGNAL]->(s:IndicatorSignal)
+        WHERE s.as_of_date < $cutoff AND s.is_active = true
+        SET s.is_active = false, s.valid_to = $cutoff
+        SET r.is_active = false, r.valid_to = $cutoff
+        RETURN count(s) AS expired
+        """
+        with self._driver.session(database=self._database) as session:
+            result = session.run(cypher, ticker=ticker, cutoff=cutoff_date).single()
+            return result["expired"] if result else 0
+
+    def expire_evidence_for_ticker(self, ticker: str, cutoff_date: str) -> int:
+        """Set valid_to on evidence older than cutoff_date instead of deleting.
+
+        Returns count of expired evidence nodes.
+        """
+        cypher = """
+        MATCH (e:Evidence)
+        WHERE (e.evidence_id STARTS WITH $prefix_news
+            OR e.evidence_id STARTS WITH $prefix_tech
+            OR e.evidence_id STARTS WITH $prefix_fund
+            OR e.evidence_id STARTS WITH $prefix_risk
+            OR e.evidence_id STARTS WITH $prefix_global)
+          AND e.published_at < $cutoff
+          AND e.is_active = true
+        SET e.is_active = false, e.valid_to = $cutoff
+        RETURN count(e) AS expired
+        """
+        with self._driver.session(database=self._database) as session:
+            result = session.run(
+                cypher,
+                prefix_news=f"news:{ticker}:",
+                prefix_tech=f"tech_evidence:{ticker}:",
+                prefix_fund=f"fundamental_evidence:{ticker}:",
+                prefix_risk=f"risk_evidence:{ticker}:",
+                prefix_global=f"global:{ticker}:",
+                cutoff=cutoff_date,
+            ).single()
+            return result["expired"] if result else 0
+
+    def find_conflicting_claims(self, ticker: str) -> list[dict]:
+        """Find pairs of active claims with opposite polarity for a ticker."""
+        cypher = """
+        MATCH (a:Claim {ticker: $ticker})-[:CONFLICTS_WITH]-(b:Claim {ticker: $ticker})
+        WHERE a.is_active = true AND b.is_active = true
+          AND a.entity_id < b.entity_id
+        RETURN a, b
+        """
+        with self._driver.session(database=self._database) as session:
+            result = session.run(cypher, ticker=ticker)
+            pairs = []
+            for record in result:
+                pairs.append({
+                    "claim_a": dict(record["a"]),
+                    "claim_b": dict(record["b"]),
+                })
+            return pairs
+
+    def create_conflict_between_claims(
+        self,
+        claim_a_id: str,
+        claim_b_id: str,
+        as_of_date: str,
+    ) -> None:
+        """Create a bidirectional CONFLICTS_WITH relation between two claims."""
+        cypher = """
+        MATCH (a:Claim {entity_id: $a_id})
+        MATCH (b:Claim {entity_id: $b_id})
+        MERGE (a)-[r:CONFLICTS_WITH {as_of_date: $as_of}]->(b)
+        SET r.is_active = true, r.confidence = 0.8
+        MERGE (b)-[r2:CONFLICTS_WITH {as_of_date: $as_of}]->(a)
+        SET r2.is_active = true, r2.confidence = 0.8
+        """
+        with self._driver.session(database=self._database) as session:
+            session.run(
+                cypher, a_id=claim_a_id, b_id=claim_b_id, as_of=as_of_date
             )
 
     def health_check(self) -> bool:

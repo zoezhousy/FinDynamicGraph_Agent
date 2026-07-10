@@ -54,6 +54,8 @@ RelationType = Literal[
     "CONTRADICTS_CLAIM",
     "CLAIM_USED_BY",
     "HAS_OUTCOME",
+    "CONFLICTS_WITH",
+    "SUPERSEDES",
 ]
 
 
@@ -69,6 +71,9 @@ class SourceDocument(BaseModel):
     retrieved_at: datetime | None = None
     content_hash: str | None = None
     raw_text_preview: str = ""
+    version: int = 1
+    ingested_at: datetime | None = None
+    is_active: bool = True
 
 
 class Evidence(BaseModel):
@@ -80,6 +85,12 @@ class Evidence(BaseModel):
     published_at: datetime | None = None
     extracted_text: str = ""
     confidence: float = Field(ge=0.0, le=1.0)
+    version: int = 1
+    ingested_at: datetime | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    supersedes_id: str | None = None
+    is_active: bool = True
 
 
 class Claim(BaseModel):
@@ -95,6 +106,10 @@ class Claim(BaseModel):
     valid_from: datetime | None = None
     valid_to: datetime | None = None
     evidence_ids: list[str] = Field(default_factory=list)
+    version: int = 1
+    ingested_at: datetime | None = None
+    supersedes_id: str | None = None
+    is_active: bool = True
 
 
 class Entity(BaseModel):
@@ -113,6 +128,10 @@ class Relation(BaseModel):
     valid_from: datetime | None = None
     valid_to: datetime | None = None
     evidence_ids: list[str] | None = None
+    version: int = 1
+    ingested_at: datetime | None = None
+    supersedes_id: str | None = None
+    is_active: bool = True
 
 
 class FinancialSignal(BaseModel):
@@ -125,6 +144,10 @@ class FinancialSignal(BaseModel):
     valid_to: datetime | None = None
     evidence_id: str
     description: str
+    version: int = 1
+    ingested_at: datetime | None = None
+    supersedes_id: str | None = None
+    is_active: bool = True
 
 
 class GraphUpdate(BaseModel):

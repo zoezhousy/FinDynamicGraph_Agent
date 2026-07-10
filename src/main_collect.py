@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
 
 from src.agents.technical_agent import TechnicalAgent
@@ -12,6 +14,7 @@ from src.collectors.fundamental_collector import FundamentalCollector
 from src.collectors.global_news_collector import GlobalNewsCollector
 from src.collectors.market_collector import MarketCollector
 from src.collectors.news_collector import NewsCollector
+from src.collectors.newsapi_collector import NewsAPICollector
 from src.config import CollectionConfig
 from src.kg.schema import Entity
 from src.kg.store_neo4j import Neo4jKGStore
@@ -61,50 +64,186 @@ def build_company_entity(ticker: str) -> Entity:
     )
 
 
+def _dedup_news_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Merge and deduplicate multiple news DataFrames by URL, then title."""
+    valid = [f for f in frames if f is not None and not f.empty]
+    if not valid:
+        return pd.DataFrame()
+    merged = pd.concat(valid, ignore_index=True)
+    # Deduplicate by URL first (most reliable), then title as fallback
+    if "url" in merged.columns:
+        merged = merged.drop_duplicates(subset=["url"], keep="first")
+    if "title" in merged.columns:
+        merged = merged.drop_duplicates(subset=["title"], keep="first")
+    if "published_time" in merged.columns:
+        merged = merged.sort_values("published_time", ascending=False).reset_index(drop=True)
+    return merged
+
+
+def _merge_fundamentals_history(
+    new_df: pd.DataFrame,
+    history_path: Path,
+    max_history_days: int = 365,
+) -> pd.DataFrame:
+    """Append new fundamentals snapshot to historical file, prune old data."""
+    if history_path.exists():
+        try:
+            old = pd.read_parquet(history_path)
+            combined = pd.concat([old, new_df], ignore_index=True)
+            # Keep last N days of snapshots to prevent unbounded growth
+            if "as_of_date" in combined.columns:
+                combined["as_of_date_dt"] = pd.to_datetime(combined["as_of_date"], errors="coerce")
+                cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=max_history_days)
+                combined = combined[combined["as_of_date_dt"] >= cutoff].copy()
+                combined = combined.drop(columns=["as_of_date_dt"])
+            combined = combined.drop_duplicates(
+                subset=["ticker", "metric", "as_of_date"], keep="last"
+            ).reset_index(drop=True)
+            return combined
+        except Exception as exc:
+            logging.warning("Failed to load fundamentals history, starting fresh: %s", exc)
+    return new_df
+
+
+def _fetch_ohlcv_with_cache(
+    ticker: str,
+    market_collector: MarketCollector,
+    ticker_dir: Path,
+) -> pd.DataFrame | None:
+    """Fetch OHLCV: load cached history first, then merge with incremental fetch."""
+    cached_path = ticker_dir / "ohlcv_2021_now.parquet"
+    if not cached_path.exists():
+        cached_path = ticker_dir / "ohlcv_2021_2025.parquet"
+
+    cached_df = None
+    last_date = None
+    if cached_path.exists():
+        try:
+            cached_df = pd.read_parquet(cached_path)
+            if "date" in cached_df.columns and len(cached_df) > 0:
+                last_date = pd.to_datetime(cached_df["date"]).max()
+                logging.info(
+                    "Loaded cached OHLCV for %s: %d rows, last date: %s",
+                    ticker, len(cached_df), last_date.date(),
+                )
+        except Exception as exc:
+            logging.warning("Failed to load cached OHLCV for %s: %s", ticker, exc)
+
+    # Always try to fetch fresh data (full range) to pick up corrections
+    try:
+        fresh_df = market_collector.fetch_ohlcv(ticker)
+        if cached_df is not None and last_date is not None:
+            # Merge: use fresh data but keep cached rows beyond fresh end date
+            fresh_max = pd.to_datetime(fresh_df["date"]).max()
+            if last_date > fresh_max:
+                extra = cached_df[pd.to_datetime(cached_df["date"]) > fresh_max].copy()
+                fresh_df = pd.concat([fresh_df, extra], ignore_index=True)
+                fresh_df = fresh_df.sort_values("date").reset_index(drop=True)
+                logging.info(
+                    "Merged cached OHLCV beyond fresh range for %s: %d extra rows",
+                    ticker, len(extra),
+                )
+        return fresh_df
+    except Exception as exc:
+        logging.warning("OHLCV fetch failed for %s, using cached data: %s", ticker, exc)
+        return cached_df
+
+
 def run_collection(config: CollectionConfig) -> None:
     market_collector = MarketCollector(config)
     news_collector = NewsCollector(config)
     global_news_collector = GlobalNewsCollector(config)
+    newsapi_collector = NewsAPICollector(config)
     fundamental_collector = FundamentalCollector(config)
     technical_agent = TechnicalAgent()
     kg_store = _init_kg_store(config)
 
     try:
+        # Fetch OHLCV for all tickers in parallel (heaviest I/O)
+        with ThreadPoolExecutor(max_workers=len(config.tickers)) as pool:
+            ohlcv_futures = {
+                pool.submit(
+                    _fetch_ohlcv_with_cache, t, market_collector, config.output_root / t
+                ): t
+                for t in config.tickers
+            }
+            ohlcv_cache: dict[str, pd.DataFrame | None] = {}
+            for fut in as_completed(ohlcv_futures):
+                t = ohlcv_futures[fut]
+                try:
+                    ohlcv_cache[t] = fut.result()
+                except Exception as exc:
+                    logging.error("OHLCV parallel fetch failed for %s: %s", t, exc)
+                    ohlcv_cache[t] = None
+
+        # Process each ticker sequentially (news + KG updates)
         for ticker in config.tickers:
             ticker_dir = config.output_root / ticker
             ensure_dir(ticker_dir)
             logging.info("Start collecting ticker=%s", ticker)
 
-            ohlcv_df = None
+            ohlcv_df = ohlcv_cache.get(ticker)
+            if ohlcv_df is not None:
+                save_parquet(ohlcv_df, ticker_dir / "ohlcv_2021_now.parquet")
+
             news_df = None
             global_news_df = None
             fundamentals_df = None
 
-            try:
-                ohlcv_df = market_collector.fetch_ohlcv(ticker)
-                save_parquet(ohlcv_df, ticker_dir / "ohlcv_2021_now.parquet")
-            except Exception as exc:
-                logging.exception("OHLCV collection failed for %s: %s", ticker, exc)
+            # ── News: fetch from both sources, then dedup ──
+            news_frames: list[pd.DataFrame] = []
+            newsapi_df = None
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = {
+                    pool.submit(news_collector.fetch_news, ticker, config.news_limit_per_ticker): "tavily",
+                    pool.submit(newsapi_collector.fetch_news, ticker, config.news_limit_per_ticker): "newsapi",
+                }
+                for fut in as_completed(futures):
+                    source = futures[fut]
+                    try:
+                        df = fut.result()
+                        if df is not None and not df.empty:
+                            news_frames.append(df)
+                            if source == "newsapi":
+                                newsapi_df = df
+                                save_parquet(df, ticker_dir / "newsapi_latest.parquet")
+                            else:
+                                save_parquet(df, ticker_dir / "news_latest.parquet")
+                    except Exception as exc:
+                        logging.exception("News (%s) failed for %s: %s", source, ticker, exc)
 
-            try:
-                news_df = news_collector.fetch_news(ticker, limit=config.news_limit_per_ticker)
-                save_parquet(news_df, ticker_dir / "news_latest.parquet")
-            except Exception as exc:
-                logging.exception("News collection failed for %s: %s", ticker, exc)
+            news_df = _dedup_news_frames(news_frames)
+            if not news_df.empty:
+                save_parquet(news_df, ticker_dir / "news_combined_latest.parquet")
+                logging.info("Combined deduped news for %s: %d articles", ticker, len(news_df))
 
+            # ── Global news ──
             try:
                 global_news_df = global_news_collector.fetch_global_news(ticker=ticker, limit=50)
-                if not global_news_df.empty:
+                if global_news_df is not None and not global_news_df.empty:
                     save_parquet(global_news_df, ticker_dir / "global_news_latest.parquet")
             except Exception as exc:
                 logging.exception("Global news collection failed for %s: %s", ticker, exc)
 
+            # ── Fundamentals: append to historical file ──
             if config.collect_fundamentals:
                 try:
-                    fundamentals_df = fundamental_collector.fetch_fundamentals(ticker)
-                    save_parquet(fundamentals_df, ticker_dir / "fundamentals_latest.parquet")
+                    fund_df = fundamental_collector.fetch_fundamentals(ticker)
+                    history_path = ticker_dir / "fundamentals_history.parquet"
+                    fundamentals_df = _merge_fundamentals_history(fund_df, history_path)
+                    save_parquet(fundamentals_df, history_path)
+                    save_parquet(fund_df, ticker_dir / "fundamentals_latest.parquet")
                 except Exception as exc:
-                    logging.exception("Fundamental collection failed for %s: %s", ticker, exc)
+                    logging.warning("Fundamental fetch failed for %s, trying cached: %s", ticker, exc)
+                    cached_fund = ticker_dir / "fundamentals_latest.parquet"
+                    if cached_fund.exists():
+                        try:
+                            fundamentals_df = pd.read_parquet(cached_fund)
+                            logging.info("Loaded cached fundamentals for %s: %d rows", ticker, len(fundamentals_df))
+                        except Exception as exc2:
+                            logging.error("Cached fundamentals also failed for %s: %s", ticker, exc2)
+                    else:
+                        logging.error("No cached fundamentals for %s", ticker)
 
             if kg_store and config.reset_graph_before_collection:
                 try:
@@ -150,6 +289,16 @@ def run_collection(config: CollectionConfig) -> None:
                     logging.info("News graph updated for ticker=%s", ticker)
                 except Exception as exc:
                     logging.exception("News KG update failed for %s: %s", ticker, exc)
+
+            if kg_store and newsapi_df is not None and not newsapi_df.empty:
+                try:
+                    na_entities, na_evidences, na_relations = build_news_from_frame(ticker, newsapi_df)
+                    kg_store.upsert_entities(na_entities)
+                    kg_store.upsert_evidences(na_evidences)
+                    kg_store.upsert_relations(na_relations)
+                    logging.info("NewsAPI graph updated for ticker=%s", ticker)
+                except Exception as exc:
+                    logging.exception("NewsAPI KG update failed for %s: %s", ticker, exc)
 
             if kg_store and global_news_df is not None and not global_news_df.empty:
                 try:

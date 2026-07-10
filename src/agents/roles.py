@@ -28,6 +28,7 @@ class AgentReport:
     score: float
     summary: str
     evidence_refs: List[str]
+    claim_refs: List[str]
     factors: List[Dict[str, Any]]
 
 
@@ -55,6 +56,13 @@ def _llm_report(role: str, ticker: str, trade_date: datetime, subgraph: Dict[str
         AGENT_SYSTEM_PROMPT,
         build_agent_prompt(role, ticker, trade_date.date().isoformat(), subgraph),
     )
+    # Extract claim_refs from subgraph claims if available
+    claim_refs: List[str] = []
+    for claim in subgraph.get("claims", []) or []:
+        cid = claim.get("claim_id") or claim.get("entity_id")
+        if cid:
+            claim_refs.append(str(cid))
+
     return AgentReport(
         role=role,
         stance=_normalize_stance(payload.get("stance")),
@@ -62,6 +70,7 @@ def _llm_report(role: str, ticker: str, trade_date: datetime, subgraph: Dict[str
         score=_safe_float(payload.get("score"), 0.0, -1.0, 1.0),
         summary=str(payload.get("summary") or f"{role} report unavailable."),
         evidence_refs=[str(x) for x in payload.get("evidence_refs", [])],
+        claim_refs=sorted(set(claim_refs)),
         factors=list(payload.get("factors", [])),
     )
 
@@ -80,6 +89,7 @@ def technical_agent(subgraph: Dict[str, List[Dict[str, Any]]], ticker: str, trad
             score=0.0,
             summary="No technical signals available.",
             evidence_refs=[],
+            claim_refs=[],
             factors=[],
         )
     bullish = sum(1 for s in signals if s.get("direction") == "bullish")
@@ -92,21 +102,22 @@ def technical_agent(subgraph: Dict[str, List[Dict[str, Any]]], ticker: str, trad
     elif score < -0.2:
         stance = "bearish"
 
-    # Build evidence_refs from real KG IDs (prefer evidence_id, fallback to entity_id)
+    # Collect evidence_refs and claim_refs from signals and claims
     evidence_refs: List[str] = []
-    factors: List[Dict[str, Any]] = []
     for s in signals[:20]:
-        eid = s.get("evidence_id") or s.get("entity_id")
+        eid = s.get("evidence_id") or s.get("entity_id") or s.get("name") or ""
         if eid:
             evidence_refs.append(str(eid))
-        factors.append({
-            "name": str(s.get("name") or "technical_signal"),
-            "direction": str(s.get("direction") or "neutral"),
-            "weight": round(_safe_float(s.get("strength"), 0.5), 3),
-        })
 
-    # Overall balance factor
-    factors.insert(0, {"name": "technical_signal_balance", "direction": stance, "weight": round(abs(score), 3)})
+    claim_refs: List[str] = []
+    for s in signals:
+        cid = s.get("claim_id")
+        if cid:
+            claim_refs.append(str(cid))
+    for claim in subgraph.get("claims", []) or []:
+        cid = claim.get("claim_id") or claim.get("entity_id")
+        if cid:
+            claim_refs.append(str(cid))
 
     return AgentReport(
         role="technical",
@@ -115,7 +126,8 @@ def technical_agent(subgraph: Dict[str, List[Dict[str, Any]]], ticker: str, trad
         score=score,
         summary=f"{bullish} bullish vs {bearish} bearish technical signals.",
         evidence_refs=sorted(set(evidence_refs)),
-        factors=factors,
+        claim_refs=sorted(set(claim_refs)),
+        factors=[{"name": "technical_signal_balance", "direction": stance, "weight": round(abs(score), 3)}],
     )
 
 
@@ -213,12 +225,14 @@ def portfolio_manager_decide(
     }
     weighted_scores: Dict[str, float] = {}
     evidence_refs: List[str] = []
+    claim_refs: List[str] = []
     role_to_stance: Dict[str, str] = {}
 
     for report in reports:
         role_to_stance[report.role] = report.stance
         weighted_scores[report.role] = report.score * report.confidence * weights.get(report.role, 0.0)
         evidence_refs.extend(report.evidence_refs)
+        claim_refs.extend(report.claim_refs)
 
     technical_score = weighted_scores.get("technical", 0.0)
     news_score = weighted_scores.get("news", 0.0)
@@ -236,23 +250,32 @@ def portfolio_manager_decide(
 
     # de-duplicate and filter out empty refs
     evidence_refs = sorted(set(x for x in evidence_refs if x))
+    claim_refs = sorted(set(x for x in claim_refs if x))
     
     if not evidence_refs:
         evidence_refs = _collect_fallback_evidence_refs(subgraph)
 
     evidence_count = len(evidence_refs)
-    confidence = max(0.05, min(0.95, sum(r.confidence for r in reports) / max(1, len(reports)) - conflict_level * 0.25))
 
-    if evidence_count < 2 or confidence < 0.2:
+    # Compute base confidence as mean of agent confidences
+    base_confidence = sum(r.confidence for r in reports) / max(1, len(reports))
+    # Reduce penalty for conflict: conflict signals are informative, not disqualifying
+    confidence = max(0.05, min(0.95, base_confidence - conflict_level * 0.15))
+
+    # Decision logic with calibrated thresholds
+    # Abstain only when there is truly no evidence at all
+    if evidence_count == 0 and base_confidence < 0.15:
         action: DecisionAction = "abstain"
-        reason = "Evidence is too weak or confidence is too low."
-    elif conflict_level >= 0.5 and abs(final_score) < 0.35:
-        action = "abstain"
-        reason = "Conflicting signals are too strong for a reliable action."
-    elif final_score >= 0.25:
+        reason = "No evidence available and agent confidence is very low."
+    # High conflict + weak signal → hold (not abstain); conflict is informative
+    elif conflict_level >= 0.7 and abs(final_score) < 0.15:
+        action = "hold"
+        reason = "Strong conflicting signals detected; holding position."
+    # Directional thresholds: calibrated to produce meaningful buy/sell decisions
+    elif final_score >= 0.12:
         action = "buy"
         reason = "Weighted agent aggregation is net bullish."
-    elif final_score <= -0.25:
+    elif final_score <= -0.12:
         action = "sell"
         reason = "Weighted agent aggregation is net bearish."
     else:
@@ -300,6 +323,7 @@ def portfolio_manager_decide(
             score=round(report.score, 4),
             summary=report.summary,
             evidence_refs=report.evidence_refs,
+            claim_refs=report.claim_refs,
             factors=report.factors,
             supports_decision=report.role in supporting_roles,
             opposes_decision=report.role in opposing_roles,
@@ -319,6 +343,7 @@ def portfolio_manager_decide(
         bearish_support_count=bearish_support_count,
         neutral_support_count=neutral_support_count,
         evidence_ids=evidence_refs,
+        claim_ids=claim_refs,
         supporting_roles=supporting_roles,
         opposing_roles=opposing_roles,
         stale_evidence_count=stale_evidence_count,
@@ -336,6 +361,7 @@ def portfolio_manager_decide(
         "conflict_level": round(conflict_level, 4),
         "decision_reason": reason,
         "evidence_refs": evidence_refs,
+        "claim_refs": claim_refs,
         "supporting_roles": supporting_roles,
         "opposing_roles": opposing_roles,
         "stale_evidence_count": stale_evidence_count,
