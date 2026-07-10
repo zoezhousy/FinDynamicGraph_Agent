@@ -256,7 +256,13 @@ def build_news_from_frame(
         title = row.get("title")
         source_name = row.get("source")
         content = row.get("content") or title or ""
-        
+
+        # Guard against NaN in string fields
+        if source_name is not None and source_name != source_name:
+            source_name = None
+        if title is not None and title != title:
+            title = None
+
         _raw_score = row.get("score")
         confidence = float(_raw_score) if _raw_score is not None and _raw_score == _raw_score else 0.6  # NaN check
 
@@ -464,7 +470,8 @@ def build_fundamentals_from_frame(
             value_for_interpretation = raw_value
 
         as_of_date = _parse_dt(row.get("as_of_date")) or datetime.utcnow()
-        source_name = str(row.get("source") or "yfinance.info")
+        _raw_source = row.get("source")
+        source_name = str(_raw_source) if _raw_source is not None and _raw_source == _raw_source else "yfinance.info"
 
         stable_hash = sha1(
             f"{ticker}|{metric}|{raw_value}|{numeric_value}|{as_of_date.date()}".encode("utf-8")
@@ -626,6 +633,13 @@ def build_global_news_from_frame(
         title = row.get("title")
         source_name = row.get("source")
         content = row.get("content") or title or ""
+
+        # Guard against NaN in string fields
+        if source_name is not None and source_name != source_name:
+            source_name = None
+        if title is not None and title != title:
+            title = None
+
         raw_score = row.get("score")
         try:
             confidence = float(raw_score) if raw_score is not None else 0.5

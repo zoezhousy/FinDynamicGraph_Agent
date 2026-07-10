@@ -125,6 +125,70 @@ Prefer conservative judgments when evidence is weak.
 """
 
 
+def _filter_news_by_trade_date(
+    df: pd.DataFrame,
+    trade_date: datetime,
+    max_items: int = 10,
+) -> pd.DataFrame:
+    """Filter news to only include items published on or before trade_date.
+
+    Attempts to parse the published timestamp from the first available column
+    in priority order: published_time, published_at, date.
+    Rows with unparseable or missing timestamps are excluded.
+    Rows published after trade_date are excluded.
+    Results are sorted by published time descending (most recent first).
+    """
+    # Identify the time column
+    time_col: str | None = None
+    for candidate in ("published_time", "published_at", "date"):
+        if candidate in df.columns:
+            time_col = candidate
+            break
+
+    if time_col is None:
+        # No identifiable time column — cannot filter safely
+        return pd.DataFrame()
+
+    # Parse timestamps — handle mixed tz-aware / tz-naive strings
+    # pandas can't parse them together with utc=True, so we normalize each
+    raw = df[time_col].tolist()
+    parsed_list = []
+    for val in raw:
+        try:
+            ts = pd.Timestamp(val)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            else:
+                ts = ts.tz_convert("UTC")
+            parsed_list.append(ts)
+        except Exception:
+            parsed_list.append(pd.NaT)
+    parsed = pd.Series(parsed_list, index=df.index)
+
+    # Build a tz-aware trade_date for comparison
+    trade_ts = pd.Timestamp(trade_date)
+    if trade_ts.tzinfo is None:
+        trade_ts = trade_ts.tz_localize("UTC")
+    else:
+        trade_ts = trade_ts.tz_convert("UTC")
+
+    # If trade_date is midnight (date-only), extend to end of day
+    # so same-day news is included
+    if trade_ts.hour == 0 and trade_ts.minute == 0 and trade_ts.second == 0:
+        trade_ts = trade_ts.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    # Filter: valid timestamp AND on or before trade_date
+    mask = parsed.notna() & (parsed <= trade_ts)
+    filtered = df.loc[mask].copy()
+    filtered["_parsed_time"] = parsed.loc[mask]
+
+    # Sort most recent first, then take top N
+    filtered = filtered.sort_values("_parsed_time", ascending=False).head(max_items)
+    filtered = filtered.drop(columns=["_parsed_time"])
+
+    return filtered
+
+
 def _load_raw_evidence(
     ticker: str,
     trade_date: datetime,
@@ -158,22 +222,26 @@ def _load_raw_evidence(
         except Exception:
             pass
 
-    # News headlines
+    # News headlines — point-in-time filtered
     news_text = "No news available."
     news_path = ticker_dir / "news_latest.parquet"
+    if not news_path.exists():
+        news_path = ticker_dir / "news_combined_latest.parquet"
     if news_path.exists():
         try:
             df = pd.read_parquet(news_path)
             if not df.empty:
-                headlines = []
-                for _, row in df.head(10).iterrows():
-                    title = row.get("title") or ""
-                    source = row.get("source") or ""
-                    pub = row.get("published_time") or ""
-                    if title:
-                        headlines.append(f"  - [{source}] {title} ({pub})")
-                if headlines:
-                    news_text = "\n".join(headlines)
+                df = _filter_news_by_trade_date(df, trade_date)
+                if not df.empty:
+                    headlines = []
+                    for _, row in df.iterrows():
+                        title = row.get("title") or ""
+                        source = row.get("source") or ""
+                        pub = row.get("published_time") or ""
+                        if title:
+                            headlines.append(f"  - [{source}] {title} ({pub})")
+                    if headlines:
+                        news_text = "\n".join(headlines)
         except Exception:
             pass
 
