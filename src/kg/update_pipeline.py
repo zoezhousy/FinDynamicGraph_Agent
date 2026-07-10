@@ -258,8 +258,7 @@ def build_news_from_frame(
         content = row.get("content") or title or ""
         
         _raw_score = row.get("score")
-        confidence = float(_raw_score) if _raw_score is not None and _raw_score == _raw_score else 0.6
-
+        confidence = float(_raw_score) if _raw_score is not None and _raw_score == _raw_score else 0.6  # NaN check
 
         content_hash = sha1(f"{url}|{title}|{content}".encode("utf-8")).hexdigest()[:16]
 

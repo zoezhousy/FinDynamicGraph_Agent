@@ -120,6 +120,10 @@ class MarketCollector:
             except Exception as exc:
                 errors.append(f"{loader.__name__}: {exc}")
                 logging.warning("%s failed for %s: %s", loader.__name__, ticker, exc)
+                # Fast-fail on 429 rate limit — other Yahoo providers will also fail
+                if "429" in str(exc) or "Rate limited" in str(exc):
+                    logging.warning("Rate limited for %s, skipping remaining providers", ticker)
+                    break
         raise ValueError(f"All market data providers failed for {ticker}: {' | '.join(errors)}")
 
     def fetch_ohlcv(self, ticker: str) -> pd.DataFrame:

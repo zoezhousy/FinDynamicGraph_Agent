@@ -90,6 +90,10 @@ class GlobalNewsCollector:
                     )
                 except Exception as exc:
                     logging.warning("yf.Search failed for query=%r: %s", query, exc)
+                    # Fast-fail on rate limit — remaining queries will also fail
+                    if "429" in str(exc) or "Rate limited" in str(exc):
+                        logging.warning("Rate limited by Yahoo, skipping remaining global news queries")
+                        break
                     continue
 
                 for article in search.news or []:

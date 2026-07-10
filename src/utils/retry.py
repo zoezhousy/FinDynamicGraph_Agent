@@ -4,6 +4,12 @@ import time
 from typing import Callable, Tuple, Type
 
 
+def _is_rate_limited(exc: BaseException) -> bool:
+    """Check if an exception indicates rate limiting (429)."""
+    msg = str(exc).lower()
+    return "429" in msg or "rate limit" in msg or "too many requests" in msg
+
+
 def retry(
     *,
     max_retries: int,
@@ -12,7 +18,10 @@ def retry(
     max_backoff_seconds: float,
     exceptions: Tuple[Type[BaseException], ...] = (Exception,),
 ) -> Callable:
-    """Retry decorator with exponential backoff and jitter."""
+    """Retry decorator with exponential backoff and jitter.
+
+    Rate-limited requests (429) are NOT retried — they raise immediately.
+    """
 
     def decorator(func: Callable) -> Callable:
         def wrapper(*args, **kwargs):
@@ -22,6 +31,9 @@ def retry(
                 try:
                     return func(*args, **kwargs)
                 except exceptions as exc:
+                    # Don't retry rate-limited requests — fail fast
+                    if _is_rate_limited(exc):
+                        raise
                     attempt += 1
                     if attempt > max_retries:
                         raise
