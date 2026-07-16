@@ -16,7 +16,7 @@ from src.eval.baselines import (
     baseline_no_kg_no_evidence,
     baseline_static_kg,
 )
-from src.eval.metrics import directional_accuracy, summarize_returns, full_summary_by_system
+from src.eval.metrics import directional_accuracy, summarize_returns, full_summary_by_system, paired_significance_tests
 from src.eval.grounding import grounding_metrics_by_system
 from src.kg.query import KGQueryClient
 from src.sim.backtest import BacktestConfig, compute_trade_return
@@ -240,6 +240,13 @@ def run_experiment_for_tickers(
         candidates.to_csv(candidates_path, index=False, encoding="utf-8-sig")
         print(f"Saved case study candidates: {candidates_path}")
 
+    # ── Save paired significance tests ──
+    sig = paired_significance_tests(df)
+    if not sig.empty:
+        sig_path = out_dir / "significance_tests.csv"
+        sig.to_csv(sig_path, index=False, encoding="utf-8-sig")
+        print(f"Saved significance tests: {sig_path}")
+
     return df
 
 
@@ -289,6 +296,12 @@ def main() -> None:
     grounding = grounding_metrics_by_system(df)
     print("\n=== Grounding Metrics by System ===")
     print(grounding.to_string())
+
+    # Paired significance tests
+    sig = paired_significance_tests(df)
+    if not sig.empty:
+        print("\n=== Paired Significance Tests (alpha=0.05) ===")
+        print(sig.to_string(index=False))
 
 
 # ── Case Study Candidate Selection ─────────────────────────────────────

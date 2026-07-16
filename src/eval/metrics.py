@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Iterable, List
 
+import numpy as np
 import pandas as pd
+from scipy import stats
 
 from src.eval.grounding import (
     citation_precision,
@@ -118,3 +120,120 @@ def full_summary_by_system(trades: pd.DataFrame) -> pd.DataFrame:
     if not df.empty:
         df = df.set_index("system")
     return df
+
+
+def paired_significance_tests(
+    trades: pd.DataFrame,
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """Run pairwise paired-significance tests between all systems.
+
+    Uses the same (ticker, trade_date) pairs to ensure matched samples.
+
+    Tests:
+    - **Wilcoxon signed-rank** on raw_return (paired, non-parametric)
+    - **McNemar's test** on directional correctness (correct / incorrect)
+      using the exact binomial test on the off-diagonal counts.
+
+    Returns:
+        DataFrame with columns:
+        system_a, system_b, test, statistic, p_value, significant
+
+        Returns an empty DataFrame if fewer than 2 systems exist.
+    """
+    if trades.empty or "system" not in trades.columns:
+        return pd.DataFrame()
+
+    systems = sorted(trades["system"].unique())
+    if len(systems) < 2:
+        return pd.DataFrame()
+
+    # Build per-system raw_return series aligned on (ticker, trade_date)
+    return_pivot = trades.pivot_table(
+        index=["ticker", "trade_date"],
+        columns="system",
+        values="raw_return",
+        aggfunc="first",
+    )
+
+    # Build per-system correctness aligned on (ticker, trade_date)
+    executed = trades[trades["trade_executed"]].copy()
+    if "raw_return" in executed.columns:
+        executed = executed.assign(
+            _correct=(executed["raw_return"] > 0).astype(int)
+        )
+    correct_pivot = executed.pivot_table(
+        index=["ticker", "trade_date"],
+        columns="system",
+        values="_correct",
+        aggfunc="first",
+    )
+
+    rows: list[dict] = []
+
+    for i, sys_a in enumerate(systems):
+        for sys_b in systems[i + 1:]:
+            # ── Wilcoxon signed-rank on raw_return ──────────────────
+            if sys_a in return_pivot.columns and sys_b in return_pivot.columns:
+                pair = return_pivot[[sys_a, sys_b]].dropna()
+                a_vals = pair[sys_a].values
+                b_vals = pair[sys_b].values
+                diffs = a_vals - b_vals
+                n_pairs = len(pair)
+
+                if n_pairs < 2 or np.all(diffs == 0):
+                    p_wilcoxon = float("nan")
+                    stat_wilcoxon = float("nan")
+                else:
+                    # zero_diff="pratt" keeps zero-diff pairs in ranking
+                    # but excludes them from the signed-rank sum
+                    try:
+                        stat_wilcoxon, p_wilcoxon = stats.wilcoxon(
+                            a_vals, b_vals, zero_method="pratt",
+                        )
+                    except ValueError:
+                        # All non-zero diffs have same sign → cannot compute
+                        stat_wilcoxon, p_wilcoxon = float("nan"), float("nan")
+
+                rows.append({
+                    "system_a": sys_a,
+                    "system_b": sys_b,
+                    "test": "wilcoxon_raw_return",
+                    "statistic": stat_wilcoxon,
+                    "p_value": p_wilcoxon,
+                    "significant": bool(p_wilcoxon < alpha) if not np.isnan(p_wilcoxon) else False,
+                })
+
+            # ── McNemar's test on directional correctness ───────────
+            if sys_a in correct_pivot.columns and sys_b in correct_pivot.columns:
+                cpair = correct_pivot[[sys_a, sys_b]].dropna()
+                a_ok = cpair[sys_a].astype(int).values
+                b_ok = cpair[sys_b].astype(int).values
+
+                # b = a correct & b incorrect; c = a incorrect & b correct
+                b_count = int(((a_ok == 1) & (b_ok == 0)).sum())
+                c_count = int(((a_ok == 0) & (b_ok == 1)).sum())
+
+                n_discordant = b_count + c_count
+
+                if n_discordant == 0:
+                    # All pairs agree → no evidence of difference
+                    p_mcnemar = float("nan")
+                    stat_mcnemar = float("nan")
+                else:
+                    # Exact binomial test: is b/(b+c) ≠ 0.5?
+                    stat_mcnemar = float(b_count)
+                    p_mcnemar = float(
+                        stats.binomtest(b_count, n_discordant, 0.5).pvalue
+                    )
+
+                rows.append({
+                    "system_a": sys_a,
+                    "system_b": sys_b,
+                    "test": "mcnemar_directional",
+                    "statistic": stat_mcnemar,
+                    "p_value": p_mcnemar,
+                    "significant": bool(p_mcnemar < alpha) if not np.isnan(p_mcnemar) else False,
+                })
+
+    return pd.DataFrame(rows)
