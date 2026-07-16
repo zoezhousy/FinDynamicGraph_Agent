@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha1
 from typing import List, Tuple
 
@@ -251,7 +251,7 @@ def build_news_from_frame(
 
         pub_time_raw = row.get("published_time")
         published_at = _parse_dt(pub_time_raw)
-        as_of_date = published_at or datetime.utcnow()
+        as_of_date = published_at or datetime.now(timezone.utc)
 
         title = row.get("title")
         source_name = row.get("source")
@@ -285,7 +285,7 @@ def build_news_from_frame(
                     "url": url,
                     "title": title,
                     "published_at": published_at.isoformat() if published_at else None,
-                    "retrieved_at": datetime.utcnow().isoformat(),
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
                     "content_hash": content_hash,
                     "raw_text_preview": str(content)[:500],
                 },
@@ -469,7 +469,7 @@ def build_fundamentals_from_frame(
         if pd.isna(value_for_interpretation):
             value_for_interpretation = raw_value
 
-        as_of_date = _parse_dt(row.get("as_of_date")) or datetime.utcnow()
+        as_of_date = _parse_dt(row.get("as_of_date")) or datetime.now(timezone.utc)
         _raw_source = row.get("source")
         source_name = str(_raw_source) if _raw_source is not None and _raw_source == _raw_source else "yfinance.info"
 
@@ -628,7 +628,7 @@ def build_global_news_from_frame(
 
         pub_time_raw = row.get("published_time")
         published_at = _parse_dt(pub_time_raw)
-        as_of_date = published_at or datetime.utcnow()
+        as_of_date = published_at or datetime.now(timezone.utc)
 
         title = row.get("title")
         source_name = row.get("source")
@@ -668,7 +668,7 @@ def build_global_news_from_frame(
                     "url": url,
                     "title": title,
                     "published_at": published_at.isoformat() if published_at else None,
-                    "retrieved_at": datetime.utcnow().isoformat(),
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
                     "content_hash": content_hash,
                     "raw_text_preview": str(content)[:500],
                 },
@@ -1339,7 +1339,7 @@ def detect_contradictory_claims(
             ex_props = existing.properties or {}
             ex_polarity = ex_props.get("polarity", "unknown")
             if ex_polarity in opposing:
-                as_of = _parse_dt(new_props.get("as_of_date")) or datetime.utcnow()
+                as_of = _parse_dt(new_props.get("as_of_date")) or datetime.now(timezone.utc)
                 conflicts.append((
                     new_claim.entity_id,
                     existing.entity_id,
@@ -1410,7 +1410,7 @@ def build_supersedes_relations(
             new_props.get("polarity", ""),
         )
         new_ev = set(new_props.get("evidence_ids", []))
-        as_of = _parse_dt(new_props.get("as_of_date")) or datetime.utcnow()
+        as_of = _parse_dt(new_props.get("as_of_date")) or datetime.now(timezone.utc)
 
         for existing in existing_by_key.get(key, []):
             ex_props = existing.properties or {}

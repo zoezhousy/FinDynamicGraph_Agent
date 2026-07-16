@@ -35,7 +35,7 @@ class KGQueryClient:
         """
         signal_from = as_of_date - timedelta(days=signal_window_days)
         news_from = as_of_date - timedelta(days=news_window_days)
-        as_of_iso = as_of_date.isoformat()
+        as_of_iso = _end_of_day(as_of_date).isoformat()
         signal_from_iso = signal_from.isoformat()
         news_from_iso = news_from.isoformat()
 
@@ -224,7 +224,7 @@ class KGQueryClient:
 
         Avoids future leakage with the same temporal filters as get_ticker_subgraph.
         """
-        as_of_iso = as_of_date.isoformat()
+        as_of_iso = _end_of_day(as_of_date).isoformat()
 
         cypher = """
         MATCH (c:Company {ticker: $ticker})
@@ -398,6 +398,7 @@ def filter_claims_by_date(
     as_of_date: datetime,
 ) -> list[dict[str, Any]]:
     """Filter claims to only those valid at as_of_date (pure Python)."""
+    as_of = _end_of_day(as_of_date)
     result = []
     for claim in claims:
         valid_from = _parse_dt_safe(claim.get("valid_from"))
@@ -406,9 +407,9 @@ def filter_claims_by_date(
 
         if not is_active:
             continue
-        if valid_from and valid_from > as_of_date:
+        if valid_from and valid_from > as_of:
             continue
-        if valid_to and valid_to <= as_of_date:
+        if valid_to and valid_to <= as_of:
             continue
 
         result.append(claim)
@@ -420,6 +421,7 @@ def filter_evidence_by_date(
     as_of_date: datetime,
 ) -> list[dict[str, Any]]:
     """Filter evidences to only those valid at as_of_date (pure Python)."""
+    as_of = _end_of_day(as_of_date)
     result = []
     for ev in evidences:
         published_at = _parse_dt_safe(ev.get("published_at"))
@@ -429,11 +431,11 @@ def filter_evidence_by_date(
 
         if not is_active:
             continue
-        if published_at and published_at > as_of_date:
+        if published_at and published_at > as_of:
             continue
-        if valid_from and valid_from > as_of_date:
+        if valid_from and valid_from > as_of:
             continue
-        if valid_to and valid_to <= as_of_date:
+        if valid_to and valid_to <= as_of:
             continue
 
         result.append(ev)
@@ -445,6 +447,7 @@ def filter_signals_by_date(
     as_of_date: datetime,
 ) -> list[dict[str, Any]]:
     """Filter signals to only those valid at as_of_date (pure Python)."""
+    cutoff = _end_of_day(as_of_date)
     result = []
     for sig in signals:
         as_of = _parse_dt_safe(sig.get("as_of_date"))
@@ -454,11 +457,11 @@ def filter_signals_by_date(
 
         if not is_active:
             continue
-        if as_of and as_of > as_of_date:
+        if as_of and as_of > cutoff:
             continue
-        if valid_from and valid_from > as_of_date:
+        if valid_from and valid_from > cutoff:
             continue
-        if valid_to and valid_to <= as_of_date:
+        if valid_to and valid_to <= cutoff:
             continue
 
         result.append(sig)
@@ -598,6 +601,14 @@ def _empty_summary(ticker: str, as_of_date: datetime) -> dict[str, Any]:
         "top_claims": [],
         "top_sources": [],
     }
+
+
+def _end_of_day(dt: datetime) -> datetime:
+    """If *dt* is midnight (date-only), extend to 23:59:59.999999 so same-day
+    items with a time component are included in ``<=`` comparisons."""
+    if dt.hour == 0 and dt.minute == 0 and dt.second == 0 and dt.microsecond == 0:
+        return dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return dt
 
 
 def _parse_dt_safe(value: Any) -> datetime | None:
