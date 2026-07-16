@@ -27,6 +27,8 @@ def _row(
     fresh_evidence_count=None,
     trade_date="2025-03-01",
     system="kg_dynamic",
+    retrieved_evidence_ids=None,
+    retrieved_claim_ids=None,
 ) -> dict:
     return {
         "evidence_refs": evidence_refs or [],
@@ -36,6 +38,8 @@ def _row(
         "fresh_evidence_count": fresh_evidence_count,
         "trade_date": trade_date,
         "system": system,
+        "retrieved_evidence_ids": retrieved_evidence_ids or [],
+        "retrieved_claim_ids": retrieved_claim_ids or [],
     }
 
 
@@ -75,6 +79,39 @@ class TestCitationPrecision:
 
     def test_empty_input(self):
         assert citation_precision([]) == 0.0
+
+    def test_hallucinated_refs_below_one(self):
+        """Refs NOT in the retrieved set should drag precision below 1.0."""
+        rows = [
+            _row(
+                evidence_refs=["ev_real", "ev_fake"],
+                claim_refs=["c_real"],
+                retrieved_evidence_ids=["ev_real"],
+                retrieved_claim_ids=["c_real"],
+            ),
+        ]
+        # 3 total refs, 2 exist in retrieved set → 2/3
+        assert citation_precision(rows) == pytest.approx(2 / 3)
+
+    def test_all_refs_exist_in_retrieved(self):
+        """When every ref is in the retrieved set, precision stays 1.0."""
+        rows = [
+            _row(
+                evidence_refs=["ev1", "ev2"],
+                claim_refs=["c1"],
+                retrieved_evidence_ids=["ev1", "ev2", "ev3"],
+                retrieved_claim_ids=["c1"],
+            ),
+        ]
+        assert citation_precision(rows) == 1.0
+
+    def test_fallback_when_no_retrieved_ids(self):
+        """Old heuristic kicks in when retrieved-ID columns are absent."""
+        rows = [
+            {"evidence_refs": ["ev1"], "claim_refs": []},
+        ]
+        # No retrieved columns → fallback: non-empty refs count as valid
+        assert citation_precision(rows) == 1.0
 
 
 # ── claim_coverage ─────────────────────────────────────────────────────

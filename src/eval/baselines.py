@@ -401,6 +401,8 @@ def _build_baseline_result(
     evidence_refs: list[str],
     agent_reports: list[dict],
     baseline: str,
+    retrieved_evidence_ids: list[str] | None = None,
+    retrieved_claim_ids: list[str] | None = None,
 ) -> Dict[str, Any]:
     """Build a result dict compatible with the kg_dynamic format."""
     # Determine supporting/opposing roles from agent reports
@@ -433,6 +435,9 @@ def _build_baseline_result(
         "conflict_level": round(conflict_level, 4),
         "decision_reason": reason,
         "evidence_refs": sorted(set(x for x in evidence_refs if x)),
+        "claim_refs": [],
+        "retrieved_evidence_ids": retrieved_evidence_ids if retrieved_evidence_ids is not None else [],
+        "retrieved_claim_ids": retrieved_claim_ids if retrieved_claim_ids is not None else [],
         "supporting_roles": supporting_roles,
         "opposing_roles": opposing_roles,
         "stale_evidence_count": 0,

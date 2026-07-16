@@ -316,21 +316,21 @@ def _safe_list_len(val: Any) -> int:
 def _select_case_study_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """Select interesting decisions for dissertation case studies.
 
-    Selection criteria (any match):
-    1. kg_dynamic abstains but baseline buys/sells (conflict-driven abstain)
-    2. High conflict_level (>= 0.5)
-    3. High stale evidence in static_kg
-    4. kg_dynamic has more fresh evidence than static_kg
-    5. Decision has clear evidence_ids and claim_ids
-    6. Outcome correct while baseline incorrect
+    Returns candidates with a ``case_group`` column:
+
+    * **mechanism** — chosen on process signals only (conflict, evidence
+      freshness, graph completeness); ``direction_outcome`` is *not* inspected.
+    * **outcome_best** — kg_dynamic achieved the best return among all systems
+      on this date (at least one per run).
+    * **outcome_worst** — kg_dynamic achieved the worst return among all
+      systems on this date (at least one per run).
     """
     if df.empty:
         return pd.DataFrame()
 
-    candidates = []
-    systems = df["system"].unique()
+    mechanism_rows: list[dict] = []
+    outcome_scores: list[tuple[float, dict]] = []  # (score, row_dict)
 
-    # Group by (ticker, trade_date) for cross-system comparison
     grouped = df.groupby(["ticker", "trade_date"])
 
     for (ticker, trade_date), group in grouped:
@@ -345,8 +345,11 @@ def _select_case_study_candidates(df: pd.DataFrame) -> pd.DataFrame:
         kg_claim_refs = _safe_list_len(kg_row.get("claim_refs"))
         kg_fresh = int(kg_row.get("fresh_evidence_count", 0) or 0)
         kg_stale = int(kg_row.get("stale_evidence_count", 0) or 0)
+        kg_return = float(kg_row.get("raw_return", 0) or 0)
 
         reasons = []
+
+        # ── Mechanism criteria (no outcome inspection) ────────────────
 
         # Criterion 1: kg_dynamic abstains but baselines act
         for sys_name in ("no_kg_no_evidence", "evidence_no_kg", "static_kg"):
@@ -378,36 +381,83 @@ def _select_case_study_candidates(df: pd.DataFrame) -> pd.DataFrame:
         if kg_ev_refs > 0 and kg_claim_refs > 0:
             reasons.append(f"well-grounded: {kg_ev_refs} evidence, {kg_claim_refs} claims")
 
-        # Criterion 6: Outcome correctness
-        kg_outcome = kg_row.get("direction_outcome")
-        if kg_outcome == "correct":
-            # Check if any baseline was incorrect
-            for sys_name in ("no_kg_no_evidence", "evidence_no_kg", "static_kg"):
-                bl = group[group["system"] == sys_name]
-                if bl.empty:
-                    continue
-                bl_outcome = bl.iloc[0].get("direction_outcome")
-                if bl_outcome == "incorrect":
-                    reasons.append(f"kg_dynamic correct but {sys_name} incorrect")
+        base_row = {
+            "ticker": ticker,
+            "trade_date": trade_date,
+            "system": "kg_dynamic",
+            "action": kg_action,
+            "final_score": kg_row.get("final_score"),
+            "confidence": kg_row.get("confidence"),
+            "conflict_level": kg_conflict,
+            "evidence_count": kg_ev_refs,
+            "claim_count": kg_claim_refs,
+            "fresh_evidence_count": kg_fresh,
+            "stale_evidence_count": kg_stale,
+            "reason": str(kg_row.get("decision_reason", ""))[:200],
+        }
 
         if reasons:
-            candidates.append({
-                "ticker": ticker,
-                "trade_date": trade_date,
-                "system": "kg_dynamic",
-                "action": kg_action,
-                "final_score": kg_row.get("final_score"),
-                "confidence": kg_row.get("confidence"),
-                "conflict_level": kg_conflict,
-                "evidence_count": kg_ev_refs,
-                "claim_count": kg_claim_refs,
-                "fresh_evidence_count": kg_fresh,
-                "stale_evidence_count": kg_stale,
-                "reason": str(kg_row.get("decision_reason", ""))[:200],
-                "why_candidate": "; ".join(reasons),
-            })
+            mechanism_rows.append({**base_row, "case_group": "mechanism", "why_candidate": "; ".join(reasons)})
 
-    return pd.DataFrame(candidates)
+        # ── Outcome scoring (deferred selection) ──────────────────────
+        # Score = return advantage of kg_dynamic over the best baseline.
+        # Higher is better for best-case; lower is worse for worst-case.
+        baseline_returns = []
+        for sys_name in ("no_kg_no_evidence", "evidence_no_kg", "static_kg"):
+            bl = group[group["system"] == sys_name]
+            if bl.empty:
+                continue
+            baseline_returns.append(float(bl.iloc[0].get("raw_return", 0) or 0))
+
+        best_baseline = max(baseline_returns) if baseline_returns else 0.0
+        worst_baseline = min(baseline_returns) if baseline_returns else 0.0
+
+        # best-case score: how much kg_dynamic beats the best baseline
+        best_score = kg_return - best_baseline
+        # worst-case score: how much kg_dynamic trails the worst baseline
+        worst_score = kg_return - worst_baseline
+
+        outcome_scores.append((best_score, worst_score, {**base_row}))
+
+    # ── Assemble final DataFrame ─────────────────────────────────────
+
+    rows = list(mechanism_rows)
+
+    if outcome_scores:
+        # Best-case: highest (kg_return - best_baseline)
+        best_idx = max(range(len(outcome_scores)), key=lambda i: outcome_scores[i][0])
+        best_row = outcome_scores[best_idx][2]
+        best_adv = outcome_scores[best_idx][0]
+        rows.append({
+            **best_row,
+            "case_group": "outcome_best",
+            "why_candidate": f"best return advantage over baselines: {best_adv:+.4f}",
+        })
+
+        # Worst-case: lowest (kg_return - worst_baseline)
+        worst_idx = min(range(len(outcome_scores)), key=lambda i: outcome_scores[i][1])
+        worst_row = outcome_scores[worst_idx][2]
+        worst_gap = outcome_scores[worst_idx][1]
+        rows.append({
+            **worst_row,
+            "case_group": "outcome_worst",
+            "why_candidate": f"worst return gap vs baselines: {worst_gap:+.4f}",
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(rows)
+
+    # Ensure consistent column order
+    col_order = [
+        "case_group", "ticker", "trade_date", "system", "action",
+        "final_score", "confidence", "conflict_level",
+        "evidence_count", "claim_count", "fresh_evidence_count",
+        "stale_evidence_count", "reason", "why_candidate",
+    ]
+    result = result[[c for c in col_order if c in result.columns]]
+    return result
 
 
 def _make_serializable(df: pd.DataFrame) -> pd.DataFrame:

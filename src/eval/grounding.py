@@ -65,14 +65,19 @@ def _parse_dt_safe(val: Any) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 def citation_precision(records: RecordCollection) -> float:
-    """Fraction of decision evidence_refs that exist in the KG/subgraph.
+    """Fraction of decision evidence_refs / claim_refs that exist in the subgraph.
 
-    Conservative approximation: checks whether evidence_refs is non-empty.
-    When an evidence_refs list is present and non-empty, those refs are
-    considered "existing" (the KG query already filtered them).
+    When ``retrieved_evidence_ids`` / ``retrieved_claim_ids`` columns are
+    present (produced by ``extract_retrieved_ids`` in the KG pipeline), each
+    cited ref is checked against that ground-truth set.  A ref that is NOT in
+    the retrieved set is counted as a hallucinated citation.
+
+    Falls back to the old conservative heuristic (non-empty ⇒ valid) when the
+    retrieved-ID columns are absent (e.g. baseline systems that never query a
+    subgraph).
 
     Returns:
-        float in [0, 1].  1.0 = all decisions have valid evidence refs.
+        float in [0, 1].  1.0 = every cited ref traces to a real subgraph entity.
     """
     rows = _to_records(records)
     if not rows:
@@ -82,10 +87,25 @@ def citation_precision(records: RecordCollection) -> float:
     existing_refs = 0
 
     for row in rows:
-        refs = _safe_list(row.get("evidence_refs"))
+        # Collect all cited IDs (evidence + claims)
+        refs = _safe_list(row.get("evidence_refs")) + _safe_list(row.get("claim_refs"))
+
+        # Ground-truth: IDs actually returned by the subgraph query
+        retrieved = set(
+            _safe_list(row.get("retrieved_evidence_ids"))
+            + _safe_list(row.get("retrieved_claim_ids"))
+        )
+
         total_refs += len(refs)
-        # All refs that came from the subgraph query are considered "existing"
-        existing_refs += len(refs)
+
+        if retrieved:
+            # Strict mode: only count refs that appear in the retrieved set
+            for ref in refs:
+                if str(ref).strip() in retrieved:
+                    existing_refs += 1
+        else:
+            # Fallback (no retrieved-ID column): old heuristic
+            existing_refs += len(refs)
 
     if total_refs == 0:
         return 0.0

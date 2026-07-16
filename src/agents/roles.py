@@ -211,6 +211,55 @@ def _collect_fallback_evidence_refs(
 
     return sorted(set(refs))
 
+
+def extract_retrieved_ids(
+    subgraph: Dict[str, List[Dict[str, Any]]] | None,
+) -> tuple[list[str], list[str]]:
+    """Extract all evidence and claim IDs actually returned by a subgraph query.
+
+    Returns:
+        (retrieved_evidence_ids, retrieved_claim_ids) — sorted, deduplicated lists
+        of string IDs.  Returns empty lists if subgraph is None.
+    """
+    if subgraph is None:
+        return [], []
+
+    evidence_ids: set[str] = set()
+    claim_ids: set[str] = set()
+
+    # Evidence nodes from the "evidences" key
+    for item in subgraph.get("evidences", []) or []:
+        eid = item.get("evidence_id")
+        if eid:
+            evidence_ids.add(str(eid).strip())
+
+    # Evidence IDs from entity-level keys that carry evidence_id
+    for key in ("news", "risks", "fundamentals"):
+        for item in subgraph.get(key, []) or []:
+            eid = item.get("evidence_id")
+            if eid:
+                evidence_ids.add(str(eid).strip())
+
+    # Signal entities carry entity_id, not evidence_id
+    for item in subgraph.get("signals", []) or []:
+        eid = item.get("entity_id")
+        if eid:
+            evidence_ids.add(str(eid).strip())
+
+    # Source documents
+    for item in subgraph.get("sources", []) or []:
+        sid = item.get("source_id")
+        if sid:
+            evidence_ids.add(str(sid).strip())
+
+    # Claims
+    for item in subgraph.get("claims", []) or []:
+        cid = item.get("entity_id") or item.get("claim_id")
+        if cid:
+            claim_ids.add(str(cid).strip())
+
+    return sorted(evidence_ids), sorted(claim_ids)
+
 def portfolio_manager_decide(
     ticker: str,
     trade_date: datetime,
@@ -294,6 +343,9 @@ def portfolio_manager_decide(
         stale_evidence_count = sum(1 for ref in evidence_refs if _is_stale_ref(ref, subgraph, trade_date))
         fresh_evidence_count = max(0, len(evidence_refs) - stale_evidence_count)
 
+    # Retrieve the full set of evidence/claim IDs from the subgraph query
+    retrieved_evidence_ids, retrieved_claim_ids = extract_retrieved_ids(subgraph)
+
     evidence_alignment = "aligned"
     if action in {"buy", "sell"} and not supporting_roles:
         evidence_alignment = "unsupported"
@@ -362,6 +414,8 @@ def portfolio_manager_decide(
         "decision_reason": reason,
         "evidence_refs": evidence_refs,
         "claim_refs": claim_refs,
+        "retrieved_evidence_ids": retrieved_evidence_ids,
+        "retrieved_claim_ids": retrieved_claim_ids,
         "supporting_roles": supporting_roles,
         "opposing_roles": opposing_roles,
         "stale_evidence_count": stale_evidence_count,

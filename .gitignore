@@ -36,8 +36,6 @@
 /data/raw/market_news
 /data/logs
 
-AGENTS.md
-Claude.md
 
 *.csv
 /*_pdfs
