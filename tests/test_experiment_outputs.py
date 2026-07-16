@@ -124,6 +124,7 @@ class TestCaseStudyCandidates:
         candidates = _select_case_study_candidates(df)
 
         required_cols = {
+            "case_group",
             "ticker",
             "trade_date",
             "system",
@@ -140,8 +141,14 @@ class TestCaseStudyCandidates:
         }
         assert set(candidates.columns) == required_cols
 
+    def test_case_group_values_valid(self):
+        df = _sample_trades()
+        candidates = _select_case_study_candidates(df)
+        valid_groups = {"mechanism", "outcome_best", "outcome_worst"}
+        assert set(candidates["case_group"].unique()).issubset(valid_groups)
+
     def test_detects_conflict_driven_abstain(self):
-        """When kg_dynamic abstains but baseline buys, it should be a candidate."""
+        """When kg_dynamic abstains but baseline buys, it should be a mechanism candidate."""
         rows = [
             _make_trade_row(
                 system="kg_dynamic",
@@ -169,9 +176,9 @@ class TestCaseStudyCandidates:
         df = pd.DataFrame(rows)
         candidates = _select_case_study_candidates(df)
 
-        assert len(candidates) >= 1
-        row = candidates.iloc[0]
-        assert "abstains" in row["why_candidate"]
+        mechanism = candidates[candidates["case_group"] == "mechanism"]
+        assert len(mechanism) >= 1
+        assert any("abstains" in r["why_candidate"] for _, r in mechanism.iterrows())
 
     def test_detects_high_conflict(self):
         rows = [
@@ -182,11 +189,12 @@ class TestCaseStudyCandidates:
         ]
         df = pd.DataFrame(rows)
         candidates = _select_case_study_candidates(df)
-        assert len(candidates) >= 1
-        assert any("conflict" in r["why_candidate"] for _, r in candidates.iterrows())
+        mechanism = candidates[candidates["case_group"] == "mechanism"]
+        assert len(mechanism) >= 1
+        assert any("conflict" in r["why_candidate"] for _, r in mechanism.iterrows())
 
     def test_empty_when_no_interesting_decisions(self):
-        """When all systems agree and conflict is low, no candidates."""
+        """When all systems agree and conflict is low, only outcome groups may appear."""
         rows = [
             _make_trade_row(system="kg_dynamic", action="buy", conflict_level=0.0),
             _make_trade_row(system="no_kg_no_evidence", action="buy"),
@@ -195,6 +203,102 @@ class TestCaseStudyCandidates:
         ]
         df = pd.DataFrame(rows)
         candidates = _select_case_study_candidates(df)
-        # Might be empty or have few — depends on other criteria
-        # At minimum, well-grounded criterion might match
         assert isinstance(candidates, pd.DataFrame)
+        # outcome groups always present (at least best + worst)
+        assert set(candidates["case_group"].unique()).issubset(
+            {"mechanism", "outcome_best", "outcome_worst"}
+        )
+
+    def test_mechanism_group_ignores_outcome(self):
+        """Mechanism candidates must be selectable without direction_outcome."""
+        rows = [
+            # kg_dynamic: incorrect outcome, but high conflict → mechanism
+            _make_trade_row(
+                system="kg_dynamic",
+                conflict_level=0.8,
+                raw_return=-0.03,
+                direction_outcome="incorrect",
+            ),
+            _make_trade_row(system="no_kg_no_evidence"),
+            _make_trade_row(system="evidence_no_kg"),
+            _make_trade_row(system="static_kg"),
+        ]
+        df = pd.DataFrame(rows)
+        candidates = _select_case_study_candidates(df)
+        mechanism = candidates[candidates["case_group"] == "mechanism"]
+        assert len(mechanism) >= 1
+        # The incorrect-outcome row should still be in mechanism group
+        assert any(r["conflict_level"] >= 0.5 for _, r in mechanism.iterrows())
+
+    def test_outcome_best_and_worst_present(self):
+        """At least one best-case and one worst-case in outcome groups."""
+        rows = [
+            _make_trade_row(
+                system="kg_dynamic",
+                trade_date="2025-03-01",
+                raw_return=0.05,
+                direction_outcome="correct",
+            ),
+            _make_trade_row(
+                system="no_kg_no_evidence",
+                trade_date="2025-03-01",
+                raw_return=-0.02,
+                direction_outcome="incorrect",
+            ),
+            _make_trade_row(
+                system="evidence_no_kg",
+                trade_date="2025-03-01",
+                raw_return=-0.01,
+                direction_outcome="incorrect",
+            ),
+            _make_trade_row(
+                system="static_kg",
+                trade_date="2025-03-01",
+                raw_return=0.01,
+                direction_outcome="correct",
+            ),
+            _make_trade_row(
+                system="kg_dynamic",
+                trade_date="2025-04-01",
+                raw_return=-0.05,
+                direction_outcome="incorrect",
+            ),
+            _make_trade_row(
+                system="no_kg_no_evidence",
+                trade_date="2025-04-01",
+                raw_return=0.01,
+                direction_outcome="correct",
+            ),
+            _make_trade_row(
+                system="evidence_no_kg",
+                trade_date="2025-04-01",
+                raw_return=0.02,
+                direction_outcome="correct",
+            ),
+            _make_trade_row(
+                system="static_kg",
+                trade_date="2025-04-01",
+                raw_return=0.01,
+                direction_outcome="correct",
+            ),
+        ]
+        df = pd.DataFrame(rows)
+        candidates = _select_case_study_candidates(df)
+        groups = set(candidates["case_group"].unique())
+        assert "outcome_best" in groups
+        assert "outcome_worst" in groups
+
+    def test_no_cherry_picking_in_mechanism_group(self):
+        """Mechanism group must not contain outcome-correctness as a reason."""
+        rows = [
+            _make_trade_row(system="kg_dynamic", conflict_level=0.7, direction_outcome="correct"),
+            _make_trade_row(system="no_kg_no_evidence", direction_outcome="incorrect"),
+            _make_trade_row(system="evidence_no_kg", direction_outcome="incorrect"),
+            _make_trade_row(system="static_kg", direction_outcome="incorrect"),
+        ]
+        df = pd.DataFrame(rows)
+        candidates = _select_case_study_candidates(df)
+        mechanism = candidates[candidates["case_group"] == "mechanism"]
+        for _, row in mechanism.iterrows():
+            assert "correct" not in row["why_candidate"].lower() or "incorrect" not in row["why_candidate"].lower(), \
+                f"Mechanism reason references outcome: {row['why_candidate']}"
