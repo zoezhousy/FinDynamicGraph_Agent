@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -94,37 +94,23 @@ class NewsAPICollector:
 
         # Build search query: use alias if available, otherwise ticker.
         alias = _TICKER_ALIASES.get(ticker, ticker.replace(".HK", ""))
-        # Use company name + "Hong Kong" for better relevance.
         query = f"{alias} Hong Kong"
 
-        from_date = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        from_date = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
-        @retry(
-            max_retries=self.config.max_retries,
-            initial_backoff_seconds=self.config.initial_backoff_seconds,
-            backoff_multiplier=self.config.backoff_multiplier,
-            max_backoff_seconds=self.config.max_backoff_seconds,
-        )
-        def _search() -> Dict[str, Any]:
-            self.rate_limiter.wait()
-            params: Dict[str, Any] = {
-                "q": query,
-                "from": from_date,
-                "sortBy": "relevancy",
-                "pageSize": min(max_results * 2, 100),  # fetch extra for dedup
-                "apiKey": self.api_key,
-            }
-            resp = requests.get(_BASE_URL, params=params, timeout=30)
-            resp.raise_for_status()
-            return resp.json()
+        # ── English pass ───────────────────────────────────────────────
+        rows = self._search(query, from_date, max_results * 2)
+        for r in rows:
+            r["ticker"] = ticker
 
-        data = _search()
-        articles = data.get("articles", [])
-        rows = self._normalize(articles, ticker)
-
-        # If English-only returned few results, do a Chinese pass.
+        # ── Chinese pass if English returned few results ───────────────
         if len(rows) < max_results and "zh" in languages:
-            rows_zh = self._fetch_chinese(ticker, alias, from_date, max_results - len(rows))
+            zh_alias = _TICKER_ALIASES_ZH.get(ticker, alias)
+            rows_zh = self._search(
+                zh_alias, from_date, max_results - len(rows), language="zh",
+            )
+            for r in rows_zh:
+                r["ticker"] = ticker
             seen_urls = {r["url"] for r in rows}
             rows.extend(r for r in rows_zh if r["url"] not in seen_urls)
 
@@ -138,50 +124,46 @@ class NewsAPICollector:
         logging.info("NewsAPI: fetched %d articles for %s", len(frame), ticker)
         return frame
 
-    def _fetch_chinese(
-        self, ticker: str, alias: str, from_date: str, limit: int
+    # ── Internal helpers ───────────────────────────────────────────────
+
+    @retry(
+        max_retries=2,
+        initial_backoff_seconds=1.0,
+        backoff_multiplier=2.0,
+        max_backoff_seconds=8.0,
+    )
+    def _search(
+        self,
+        query: str,
+        from_date: str,
+        limit: int,
+        language: str | None = None,
     ) -> List[Dict[str, Any]]:
-        """Second pass targeting Chinese-language articles."""
-        zh_alias = _TICKER_ALIASES_ZH.get(ticker, alias)
-        query = zh_alias
+        """Single NewsAPI request.  Retries on transient errors, fails fast on 429."""
+        self.rate_limiter.wait()
+        params: Dict[str, Any] = {
+            "q": query,
+            "from": from_date,
+            "sortBy": "relevancy",
+            "pageSize": min(limit, 100),
+            "apiKey": self.api_key,
+        }
+        if language:
+            params["language"] = language
 
-        @retry(
-            max_retries=2,
-            initial_backoff_seconds=1.0,
-            backoff_multiplier=2.0,
-            max_backoff_seconds=8.0,
-        )
-        def _search_zh() -> Dict[str, Any]:
-            self.rate_limiter.wait()
-            params: Dict[str, Any] = {
-                "q": query,
-                "from": from_date,
-                "language": "zh",
-                "sortBy": "publishedAt",
-                "pageSize": min(limit, 100),
-                "apiKey": self.api_key,
-            }
-            resp = requests.get(_BASE_URL, params=params, timeout=30)
-            resp.raise_for_status()
-            return resp.json()
+        resp = requests.get(_BASE_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        return self._normalize(resp.json().get("articles", []))
 
-        try:
-            data = _search_zh()
-            return self._normalize(data.get("articles", []), ticker)
-        except Exception as exc:
-            logging.warning("NewsAPI Chinese pass failed for %s: %s", ticker, exc)
-            return []
-
-    @staticmethod
-    def _normalize(articles: List[Dict[str, Any]], ticker: str) -> List[Dict[str, Any]]:
+    def _normalize(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert NewsAPI article dicts to the common news schema."""
+        collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         rows: List[Dict[str, Any]] = []
-        collected_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
         for item in articles:
             source_obj = item.get("source") or {}
             rows.append(
                 {
-                    "ticker": ticker,
+                    "ticker": "",  # filled by caller
                     "title": item.get("title"),
                     "url": item.get("url"),
                     "source": source_obj.get("name", "Unknown"),
@@ -192,5 +174,4 @@ class NewsAPICollector:
                     "news_type": "newsapi",
                 }
             )
-
         return rows

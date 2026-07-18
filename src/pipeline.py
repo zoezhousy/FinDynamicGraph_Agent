@@ -17,6 +17,8 @@ from src.collectors.fundamental_collector import FundamentalCollector
 from src.collectors.global_news_collector import GlobalNewsCollector
 from src.collectors.market_collector import MarketCollector
 from src.collectors.news_collector import NewsCollector
+from src.collectors.newsapi_collector import NewsAPICollector
+from src.collectors.newsapi_collector import NewsAPICollector
 from src.config import CollectionConfig
 from src.kg.query import KGQueryClient
 from src.kg.schema import Entity
@@ -113,8 +115,31 @@ class AnalysisPipeline:
         summary["ohlcv_rows"] = len(ohlcv_df)
         logging.info("OHLCV: %d rows", len(ohlcv_df))
 
-        # ── News ──
+        # ── News: Tavily → NewsAPI → dedup ──
+        news_frames: list[pd.DataFrame] = []
         news_df = news.fetch_news(ticker, limit=self.config.news_limit_per_ticker)
+        if not news_df.empty:
+            news_frames.append(news_df)
+        try:
+            newsapi = NewsAPICollector(self.config)
+            newsapi_df = newsapi.fetch_news(ticker, limit=self.config.news_limit_per_ticker)
+            if not newsapi_df.empty:
+                news_frames.append(newsapi_df)
+        except ValueError:
+            logging.info("NewsAPI key not set, skipping")
+        except Exception as exc:
+            logging.warning("NewsAPI fetch failed for %s: %s", ticker, exc)
+
+        if len(news_frames) > 1:
+            combined = pd.concat(news_frames, ignore_index=True)
+            if "url" in combined.columns:
+                combined = combined.drop_duplicates(subset=["url"], keep="first")
+            if "title" in combined.columns:
+                combined = combined.drop_duplicates(subset=["title"], keep="first")
+            news_df = combined
+        elif news_frames:
+            news_df = news_frames[0]
+
         summary["news_rows"] = len(news_df)
         logging.info("News: %d rows", len(news_df))
 
