@@ -88,9 +88,9 @@ def export_snapshot(
 ) -> dict:
     """Export and return the snapshot dict (also written to *output_path*)."""
 
-    uri = uri or os.environ["NEO4J_URI"]
+    uri = uri or os.environ.get("NEO4J_URI", "neo4j://localhost:7687")
     user = user or os.environ.get("NEO4J_USER", "neo4j")
-    password = password or os.environ["NEO4J_PASSWORD"]
+    password = password or os.environ.get("NEO4J_PASSWORD", "neo4j")
     database = os.environ.get("NEO4J_DATABASE", database)
 
     client = KGQueryClient(uri, user, password, database)

@@ -256,8 +256,7 @@ def main() -> None:
     cfg = CollectionConfig()
     # ===== Experiment configuration =====
     experiment_start_date = "2025-01-01"
-    # TODO： change experiment_end_date to 2026-05-15 after 2026-05-15
-    experiment_end_date = "2026-04-30"
+    experiment_end_date = datetime.now().strftime("%Y-%m-%d")
     experiment_mode = "monthly" # daily / weekly / monthly
     # ====================================
 

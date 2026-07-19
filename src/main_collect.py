@@ -64,6 +64,45 @@ def build_company_entity(ticker: str) -> Entity:
     )
 
 
+def _check_existing_data_dates(ticker_dir: Path, ticker: str) -> dict[str, str | None]:
+    """Check the dates of existing data files for a ticker."""
+    dates = {}
+
+    # Check OHLCV
+    ohlcv_path = ticker_dir / "ohlcv_2021_now.parquet"
+    if not ohlcv_path.exists():
+        ohlcv_path = ticker_dir / "ohlcv_2021_2025.parquet"
+    if ohlcv_path.exists():
+        try:
+            df = pd.read_parquet(ohlcv_path)
+            if "date" in df.columns and len(df) > 0:
+                dates["ohlcv_last"] = str(pd.to_datetime(df["date"]).max().date())
+        except Exception:
+            dates["ohlcv_last"] = None
+
+    # Check news
+    news_path = ticker_dir / "news_combined_latest.parquet"
+    if news_path.exists():
+        try:
+            df = pd.read_parquet(news_path)
+            if "published_time" in df.columns and len(df) > 0:
+                dates["news_last"] = str(df["published_time"].max())
+        except Exception:
+            dates["news_last"] = None
+
+    # Check fundamentals
+    fund_path = ticker_dir / "fundamentals_history.parquet"
+    if fund_path.exists():
+        try:
+            df = pd.read_parquet(fund_path)
+            if "as_of_date" in df.columns and len(df) > 0:
+                dates["fundamentals_last"] = str(df["as_of_date"].max())
+        except Exception:
+            dates["fundamentals_last"] = None
+
+    return dates
+
+
 def _dedup_news_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
     """Merge and deduplicate multiple news DataFrames by URL, then title."""
     valid = [f for f in frames if f is not None and not f.empty]
@@ -129,20 +168,30 @@ def _fetch_ohlcv_with_cache(
         except Exception as exc:
             logging.warning("Failed to load cached OHLCV for %s: %s", ticker, exc)
 
-    # Always try to fetch fresh data (full range) to pick up corrections
+    # Incremental fetch: only fetch from last_date + 1 day if cache exists
     try:
-        fresh_df = market_collector.fetch_ohlcv(ticker)
+        if last_date is not None:
+            # Only fetch new data from the day after last cached date
+            next_day = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            logging.info("Incremental fetch for %s from %s to %s", ticker, next_day, market_collector.config.end_date)
+            fresh_df = market_collector.fetch_ohlcv(ticker, start_date=next_day)
+        else:
+            # No cache, fetch full range
+            fresh_df = market_collector.fetch_ohlcv(ticker)
+
         if cached_df is not None and last_date is not None:
-            # Merge: use fresh data but keep cached rows beyond fresh end date
-            fresh_max = pd.to_datetime(fresh_df["date"]).max()
-            if last_date > fresh_max:
-                extra = cached_df[pd.to_datetime(cached_df["date"]) > fresh_max].copy()
-                fresh_df = pd.concat([fresh_df, extra], ignore_index=True)
+            # Merge: append new data to cached data
+            if not fresh_df.empty:
+                fresh_df = pd.concat([cached_df, fresh_df], ignore_index=True)
+                fresh_df = fresh_df.drop_duplicates(subset=["date"], keep="last")
                 fresh_df = fresh_df.sort_values("date").reset_index(drop=True)
                 logging.info(
-                    "Merged cached OHLCV beyond fresh range for %s: %d extra rows",
-                    ticker, len(extra),
+                    "Merged cached + new OHLCV for %s: %d total rows",
+                    ticker, len(fresh_df),
                 )
+            else:
+                logging.info("No new OHLCV data for %s after %s", ticker, last_date.date())
+                fresh_df = cached_df
         return fresh_df
     except Exception as exc:
         logging.warning("OHLCV fetch failed for %s, using cached data: %s", ticker, exc)
@@ -181,6 +230,12 @@ def run_collection(config: CollectionConfig) -> None:
             ticker_dir = config.output_root / ticker
             ensure_dir(ticker_dir)
             logging.info("Start collecting ticker=%s", ticker)
+
+            # Check existing data dates
+            existing_dates = _check_existing_data_dates(ticker_dir, ticker)
+            if existing_dates:
+                logging.info("Existing data for %s: %s", ticker, existing_dates)
+                print(f"[{ticker}] Existing data: {existing_dates}")
 
             ohlcv_df = ohlcv_cache.get(ticker)
             if ohlcv_df is not None:

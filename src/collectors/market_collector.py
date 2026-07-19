@@ -126,8 +126,15 @@ class MarketCollector:
                     break
         raise ValueError(f"All market data providers failed for {ticker}: {' | '.join(errors)}")
 
-    def fetch_ohlcv(self, ticker: str) -> pd.DataFrame:
-        frame = self._download(ticker)
+    def fetch_ohlcv(self, ticker: str, start_date: str | None = None) -> pd.DataFrame:
+        # Override start_date for incremental fetch
+        original_start = self.config.start_date
+        if start_date:
+            self.config.start_date = start_date
+        try:
+            frame = self._download(ticker)
+        finally:
+            self.config.start_date = original_start
         frame = frame.reset_index(drop=True)
 
         if "Date" not in frame.columns:
