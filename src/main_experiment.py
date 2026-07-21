@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import logging
 import os
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
 import pandas as pd
 from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stderr,
+)
+logger = logging.getLogger(__name__)
 
 from src.agents.kg_tools import KGAgentContext
 from src.agents.orchestrator import KGBasedOrchestrator
@@ -140,62 +150,92 @@ def run_experiment_for_tickers(
     bt_cfg = BacktestConfig()
     results_rows = []
 
+    total_tasks = len(tickers) * len(trade_dates)
+    completed = 0
+
     try:
         for ticker in tickers:
             ohlcv = load_ohlcv_from_disk(config.output_root, ticker)
 
             for trade_date_str in trade_dates:
                 trade_dt = datetime.fromisoformat(trade_date_str)
-
-                # KG dynamic system
-                kg_decision = orchestrator.run_for_ticker(ticker, trade_dt)
-                bt_res = compute_trade_return(ohlcv, trade_date_str, kg_decision["action"], bt_cfg)
-
-                outcome = build_backtest_outcome(
-                    ticker=ticker,
-                    trade_dt=trade_dt,
-                    action=kg_decision["action"],
-                    kg_decision=kg_decision,
-                    bt_res=bt_res,
-                    bt_cfg=bt_cfg,
-                )
-                kg_store.upsert_backtest_outcome(outcome)
-
-                results_rows.append(
-                    {
-                        **kg_decision,
-                        **bt_res,
-                        "system": "kg_dynamic",
-                        "outcome_id": outcome.outcome_id,
-                        "direction_outcome": outcome.direction_outcome,
-                        "is_profitable": outcome.is_profitable,
-                    }
+                completed += 1
+                t0 = time.time()
+                logger.info(
+                    "[%d/%d] ticker=%s date=%s — starting",
+                    completed, total_tasks, ticker, trade_date_str,
                 )
 
-                # --- Baseline 1: no_kg_no_evidence ---
-                bl1 = baseline_no_kg_no_evidence(ticker, trade_dt)
-                bl1_bt = compute_trade_return(ohlcv, trade_date_str, bl1["action"], bt_cfg)
-                results_rows.append(
-                    {**bl1, **bl1_bt, "system": "no_kg_no_evidence"}
-                )
+                try:
+                    # KG dynamic system
+                    t_sub = time.time()
+                    kg_decision = orchestrator.run_for_ticker(ticker, trade_dt)
+                    logger.info("  kg_dynamic done (%.1fs)", time.time() - t_sub)
 
-                # --- Baseline 2: evidence_no_kg ---
-                bl2 = baseline_evidence_no_kg(ticker, trade_dt, data_root=config.output_root)
-                bl2_bt = compute_trade_return(ohlcv, trade_date_str, bl2["action"], bt_cfg)
-                results_rows.append(
-                    {**bl2, **bl2_bt, "system": "evidence_no_kg"}
-                )
+                    bt_res = compute_trade_return(ohlcv, trade_date_str, kg_decision["action"], bt_cfg)
 
-                # --- Baseline 3: static_kg ---
-                static_cutoff = datetime.fromisoformat(experiment_start_date)
-                bl3 = baseline_static_kg(
-                    ticker, trade_dt,
-                    kg_context=kg_ctx,
-                    static_cutoff=static_cutoff,
-                )
-                bl3_bt = compute_trade_return(ohlcv, trade_date_str, bl3["action"], bt_cfg)
-                results_rows.append(
-                    {**bl3, **bl3_bt, "system": "static_kg"}
+                    outcome = build_backtest_outcome(
+                        ticker=ticker,
+                        trade_dt=trade_dt,
+                        action=kg_decision["action"],
+                        kg_decision=kg_decision,
+                        bt_res=bt_res,
+                        bt_cfg=bt_cfg,
+                    )
+                    kg_store.upsert_backtest_outcome(outcome)
+
+                    results_rows.append(
+                        {
+                            **kg_decision,
+                            **bt_res,
+                            "system": "kg_dynamic",
+                            "outcome_id": outcome.outcome_id,
+                            "direction_outcome": outcome.direction_outcome,
+                            "is_profitable": outcome.is_profitable,
+                        }
+                    )
+                except Exception as e:
+                    logger.error("  kg_dynamic FAILED: %s", e)
+
+                try:
+                    # --- Baseline 1: no_kg_no_evidence ---
+                    bl1 = baseline_no_kg_no_evidence(ticker, trade_dt)
+                    bl1_bt = compute_trade_return(ohlcv, trade_date_str, bl1["action"], bt_cfg)
+                    results_rows.append(
+                        {**bl1, **bl1_bt, "system": "no_kg_no_evidence"}
+                    )
+                except Exception as e:
+                    logger.error("  no_kg_no_evidence FAILED: %s", e)
+
+                try:
+                    # --- Baseline 2: evidence_no_kg ---
+                    bl2 = baseline_evidence_no_kg(ticker, trade_dt, data_root=config.output_root)
+                    bl2_bt = compute_trade_return(ohlcv, trade_date_str, bl2["action"], bt_cfg)
+                    results_rows.append(
+                        {**bl2, **bl2_bt, "system": "evidence_no_kg"}
+                    )
+                except Exception as e:
+                    logger.error("  evidence_no_kg FAILED: %s", e)
+
+                try:
+                    # --- Baseline 3: static_kg ---
+                    static_cutoff = datetime.fromisoformat(experiment_start_date)
+                    bl3 = baseline_static_kg(
+                        ticker, trade_dt,
+                        kg_context=kg_ctx,
+                        static_cutoff=static_cutoff,
+                    )
+                    bl3_bt = compute_trade_return(ohlcv, trade_date_str, bl3["action"], bt_cfg)
+                    results_rows.append(
+                        {**bl3, **bl3_bt, "system": "static_kg"}
+                    )
+                except Exception as e:
+                    logger.error("  static_kg FAILED: %s", e)
+
+                logger.info(
+                    "[%d/%d] ticker=%s date=%s — done in %.1fs",
+                    completed, total_tasks, ticker, trade_date_str,
+                    time.time() - t0,
                 )
     finally:
         kg_client.close()
@@ -270,6 +310,14 @@ def main() -> None:
     print(f"Trade dates range: {experiment_start_date} -> {experiment_end_date}")
     print(f"Number of trade dates: {len(trade_dates)}")
     print("Sample trade dates:", trade_dates[:10])
+
+    total_iterations = len(cfg.tickers) * len(trade_dates)
+    logger.info(
+        "Starting experiment: %d tickers × %d dates = %d iterations (4 systems each)",
+        len(cfg.tickers), len(trade_dates), total_iterations,
+    )
+    logger.info("LLM calls will be retried up to 3 times on timeout/failure.")
+    logger.info("Progress will be logged per iteration to stderr.")
 
     df = run_experiment_for_tickers(cfg.tickers, trade_dates, cfg, experiment_start_date)
 

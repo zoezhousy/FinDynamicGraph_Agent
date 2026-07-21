@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,9 @@ class LLMConfig:
         )
 
 class OpenAICompatibleClient:
+    MAX_RETRIES = 3
+    RETRY_DELAY_SECONDS = 5
+
     def __init__(self, config: LLMConfig | None = None) -> None:
         self.config = config or LLMConfig.from_env()
 
@@ -62,14 +66,29 @@ class OpenAICompatibleClient:
 
         payload["max_tokens"] = self.config.max_tokens
 
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=self.config.timeout_seconds,
-        )
-        response.raise_for_status()
-        data = response.json()
+        last_error: Exception | None = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.config.timeout_seconds,
+                )
+                response.raise_for_status()
+                data = response.json()
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.MAX_RETRIES:
+                    logger.warning(
+                        "LLM call attempt %d/%d failed (%s); retrying in %ds…",
+                        attempt, self.MAX_RETRIES, exc, self.RETRY_DELAY_SECONDS,
+                    )
+                    time.sleep(self.RETRY_DELAY_SECONDS)
+                else:
+                    raise
+
 
         message = data["choices"][0]["message"]
         content = message.get("content") or ""
