@@ -17,7 +17,7 @@ class MarketCollector:
         self.config = config
         self.rate_limiter = RateLimiter(config.request_interval_seconds)
 
-    def _download_yfinance(self, ticker: str) -> pd.DataFrame:
+    def _download_yfinance(self, ticker: str, start_date: str | None = None) -> pd.DataFrame:
         @retry(
             max_retries=self.config.max_retries,
             initial_backoff_seconds=self.config.initial_backoff_seconds,
@@ -28,7 +28,7 @@ class MarketCollector:
             self.rate_limiter.wait()
             frame = yf.download(
                 ticker,
-                start=self.config.start_date,
+                start=start_date or self.config.start_date,
                 end=self.config.end_date,
                 interval="1d",
                 auto_adjust=False,
@@ -41,9 +41,9 @@ class MarketCollector:
 
         return _call()
 
-    def _download_yahoo_chart(self, ticker: str) -> pd.DataFrame:
+    def _download_yahoo_chart(self, ticker: str, start_date: str | None = None) -> pd.DataFrame:
         self.rate_limiter.wait()
-        period1 = int(pd.Timestamp(self.config.start_date).timestamp())
+        period1 = int(pd.Timestamp(start_date or self.config.start_date).timestamp())
         period2 = int(pd.Timestamp(self.config.end_date).timestamp())
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
         params = {
@@ -86,7 +86,7 @@ class MarketCollector:
             raise ValueError(f"Yahoo chart returned only empty OHLCV rows for {ticker}")
         return frame
 
-    def _download_stooq_csv(self, ticker: str) -> pd.DataFrame:
+    def _download_stooq_csv(self, ticker: str, start_date: str | None = None) -> pd.DataFrame:
         symbol = ticker.lower()
         self.rate_limiter.wait()
         response = requests.get(
@@ -103,18 +103,18 @@ class MarketCollector:
             raise ValueError(f"Unexpected Stooq response format for {ticker}")
         frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
         frame = frame.dropna(subset=["Date"]).copy()
-        start = pd.to_datetime(self.config.start_date)
+        start = pd.to_datetime(start_date or self.config.start_date)
         end = pd.to_datetime(self.config.end_date)
         frame = frame[(frame["Date"] >= start) & (frame["Date"] <= end)].copy()
         if frame.empty:
             raise ValueError(f"No OHLCV rows in configured date range for {ticker}")
         return frame
 
-    def _download(self, ticker: str) -> pd.DataFrame:
+    def _download(self, ticker: str, start_date: str | None = None) -> pd.DataFrame:
         errors: list[str] = []
         for loader in (self._download_yahoo_chart, self._download_yfinance, self._download_stooq_csv):
             try:
-                frame = loader(ticker)
+                frame = loader(ticker, start_date=start_date)
                 logging.info("Market data provider %s succeeded for %s", loader.__name__, ticker)
                 return frame
             except Exception as exc:
@@ -127,14 +127,7 @@ class MarketCollector:
         raise ValueError(f"All market data providers failed for {ticker}: {' | '.join(errors)}")
 
     def fetch_ohlcv(self, ticker: str, start_date: str | None = None) -> pd.DataFrame:
-        # Override start_date for incremental fetch
-        original_start = self.config.start_date
-        if start_date:
-            self.config.start_date = start_date
-        try:
-            frame = self._download(ticker)
-        finally:
-            self.config.start_date = original_start
+        frame = self._download(ticker, start_date=start_date)
         frame = frame.reset_index(drop=True)
 
         if "Date" not in frame.columns:

@@ -132,7 +132,7 @@ def _merge_fundamentals_history(
             # Keep last N days of snapshots to prevent unbounded growth
             if "as_of_date" in combined.columns:
                 combined["as_of_date_dt"] = pd.to_datetime(combined["as_of_date"], errors="coerce")
-                cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=max_history_days)
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=max_history_days)
                 combined = combined[combined["as_of_date_dt"] >= cutoff].copy()
                 combined = combined.drop(columns=["as_of_date_dt"])
             combined = combined.drop_duplicates(
@@ -173,6 +173,14 @@ def _fetch_ohlcv_with_cache(
         if last_date is not None:
             # Only fetch new data from the day after last cached date
             next_day = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if next_day >= today_str:
+                # Next day is today or future — data not published yet; skip fetch
+                logging.info(
+                    "Skipping incremental OHLCV fetch for %s: next_day (%s) >= today (%s), using cached data",
+                    ticker, next_day, today_str,
+                )
+                return cached_df
             logging.info("Incremental fetch for %s from %s to %s", ticker, next_day, market_collector.config.end_date)
             fresh_df = market_collector.fetch_ohlcv(ticker, start_date=next_day)
         else:

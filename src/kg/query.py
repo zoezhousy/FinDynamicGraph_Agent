@@ -10,7 +10,11 @@ class KGQueryClient:
     """Read-only query helper for agents."""
 
     def __init__(self, uri: str, user: str, password: str, database: str = "neo4j") -> None:
-        self._driver = GraphDatabase.driver(uri, auth=basic_auth(user, password))
+        self._driver = GraphDatabase.driver(
+            uri,
+            auth=basic_auth(user, password),
+            notifications_disabled_categories=["UNRECOGNIZED"],
+        )
         self._database = database
 
     def close(self) -> None:
