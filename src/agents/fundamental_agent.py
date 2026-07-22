@@ -81,6 +81,7 @@ class FundamentalAgent(BaseAgent):
         scored_directions: List[float] = []
 
         evidence_refs: List[str] = []
+        claim_refs: List[str] = []
         factors: List[Dict[str, Any]] = []
 
         for f in fundamentals:
@@ -90,12 +91,15 @@ class FundamentalAgent(BaseAgent):
             numeric_value = _safe_float(f.get("numeric_value"))
             evidence_id = f.get("evidence_id")
             entity_id = f.get("entity_id")
+            claim_id = f.get("claim_id")
 
             # Collect evidence refs
             if evidence_id:
                 evidence_refs.append(str(evidence_id))
             elif entity_id:
                 evidence_refs.append(str(entity_id))
+            if claim_id:
+                claim_refs.append(str(claim_id))
 
             # Count directions
             if direction == "bullish":
@@ -162,5 +166,6 @@ class FundamentalAgent(BaseAgent):
             score=round(avg_score, 4),
             summary=" ".join(summary_parts),
             evidence_refs=sorted(set(evidence_refs)),
+            claim_refs=sorted(set(claim_refs)),
             factors=factors,
         )

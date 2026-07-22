@@ -331,13 +331,16 @@ def baseline_static_kg(
 ) -> Dict[str, Any]:
     """Baseline 3: Full KG pipeline but with frozen (static) graph.
 
+    Uses the same agent architecture as kg_dynamic (LangGraph when
+    AGENT_BACKEND=langgraph, legacy otherwise), but queries only data
+    before ``static_cutoff``.
+
     Args:
         kg_context: KGAgentContext instance for querying the graph.
         static_cutoff: Only use KG data before this date.
                        Defaults to 2024-12-31 (before experiment period).
     """
     if kg_context is None:
-        # Fallback if no KG context provided
         return _build_baseline_result(
             ticker=ticker,
             trade_date=trade_date,
@@ -352,14 +355,94 @@ def baseline_static_kg(
         )
 
     cutoff = static_cutoff or datetime(2024, 12, 31)
+    backend = os.getenv("AGENT_BACKEND", "langgraph")
 
-    # Load subgraph with the static cutoff date instead of trade_date
+    if backend == "langgraph":
+        return _baseline_static_kg_langgraph(ticker, trade_date, kg_context, cutoff)
+    else:
+        return _baseline_static_kg_legacy(ticker, trade_date, kg_context, cutoff)
+
+
+def _baseline_static_kg_langgraph(
+    ticker: str,
+    trade_date: datetime,
+    kg_context,
+    cutoff: datetime,
+) -> Dict[str, Any]:
+    """Static KG baseline using LangGraph agents with FixedCutoffPolicy."""
+    import asyncio
+    from src.agents.kg_tools import build_kg_tools, FixedCutoffPolicy
+    from src.agents.langgraph_agents import (
+        make_llm, _extract_report,
+        create_news_agent, create_technical_agent,
+        create_fundamental_agent, create_risk_agent,
+    )
+
+    llm = make_llm()
+    cutoff_str = cutoff.date().isoformat()
+    tools = build_kg_tools(kg_context.query_client, FixedCutoffPolicy(cutoff_str))
+
+    news_ag = create_news_agent(llm, tools)
+    tech_ag = create_technical_agent(llm, tools)
+    fund_ag = create_fundamental_agent(llm, tools)
+    risk_ag = create_risk_agent(llm, tools)
+
+    semaphore = asyncio.Semaphore(2)
+
+    async def _run():
+        input_data = {
+            "messages": [{"role": "user", "content": f"Analyze {ticker} as of {trade_date.date().isoformat()}"}]
+        }
+
+        async def _safe(agent, role):
+            try:
+                async with semaphore:
+                    result = await asyncio.wait_for(agent.ainvoke(input_data), timeout=90)
+                last_content = result["messages"][-1].content
+                schema = _extract_report(last_content, role)
+                if schema:
+                    return AgentReport(role=role, **schema.model_dump())
+            except Exception:
+                pass
+            return AgentReport(
+                role=role, stance="uncertain", confidence=0.0, score=0.0,
+                summary=f"{role} agent failed — no data available.",
+                evidence_refs=[], claim_refs=[], factors=[],
+            )
+
+        reports = await asyncio.gather(
+            _safe(news_ag, "news"),
+            _safe(tech_ag, "technical"),
+            _safe(fund_ag, "fundamental"),
+            _safe(risk_ag, "risk"),
+        )
+        return list(reports)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        reports = asyncio.run(_run())
+    else:
+        raise RuntimeError("Event loop already running.")
+
     subgraph = kg_context.load_subgraph(ticker, cutoff)
+    decision = portfolio_manager_decide(ticker, trade_date, reports, subgraph=subgraph)
+    decision["baseline"] = "static_kg"
+    return decision
 
-    # Run the same multi-agent pipeline as the dynamic system
+
+def _baseline_static_kg_legacy(
+    ticker: str,
+    trade_date: datetime,
+    kg_context,
+    cutoff: datetime,
+) -> Dict[str, Any]:
+    """Static KG baseline using legacy direct LLM calls."""
     from src.agents.fundamental_agent import FundamentalAgent
     from src.agents.risk_agent import RiskAgent
     from src.agents.roles import news_agent, technical_agent
+
+    subgraph = kg_context.load_subgraph(ticker, cutoff)
 
     fundamental_agent_runner = FundamentalAgent()
     risk_agent_runner = RiskAgent()
@@ -378,10 +461,7 @@ def baseline_static_kg(
         )
     )
 
-    # Use the same portfolio manager decision logic
     decision = portfolio_manager_decide(ticker, trade_date, reports, subgraph=subgraph)
-
-    # Tag it as static_kg baseline
     decision["baseline"] = "static_kg"
     return decision
 
