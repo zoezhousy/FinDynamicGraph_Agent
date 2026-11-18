@@ -1,10 +1,8 @@
-import yfinance as yf
+import pytest
+pytestmark = pytest.mark.integration
 
-for ticker in ['0005.HK', '0700.HK', '1299.HK']:
-    stock = yf.Ticker(ticker)
-    news = stock.get_news(count=5)
-    print(f'\n{ticker}: {len(news) if news else 0} articles')
-    if news:
-        for i, a in enumerate(news[:3]):
-            content = a.get('content', {})
-            print(f'  [{i+1}] {content.get("provider",{}).get("displayName","?")} | {content.get("pubDate","")[:10]} | {content.get("title","")[:70]}')
+@pytest.mark.parametrize("ticker", ["0005.HK", "0700.HK", "1299.HK"])
+def test_yfinance_news(ticker):
+    import yfinance as yf
+    news = yf.Ticker(ticker).get_news(count=5)
+    assert isinstance(news, list)

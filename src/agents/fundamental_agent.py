@@ -47,8 +47,9 @@ def _direction_to_score(direction: str, strength: float) -> float:
     return 0.0
 
 
-class FundamentalAgent(BaseAgent):
-    def __init__(self) -> None:
+class FundamentalAgent(BaseAgent[AgentReport]):
+    def __init__(self, client=None) -> None:
+        self.client = client
         super().__init__("fundamental_agent")
 
     def run(self, input_data: dict) -> AgentReport:
@@ -61,7 +62,7 @@ class FundamentalAgent(BaseAgent):
             return self._run_from_kg_fundamentals(fundamentals, ticker)
 
         # Fallback to LLM if no structured fundamentals in KG.
-        return run_fundamental_agent_llm(subgraph, ticker, trade_date)
+        return run_fundamental_agent_llm(subgraph, ticker, trade_date, **({"client": self.client} if self.client is not None else {}))
 
     # ------------------------------------------------------------------
     # Rule-based analysis on structured KG fundamental signals

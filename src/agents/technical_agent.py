@@ -11,7 +11,7 @@ from src.agents.base_agent import BaseAgent
 from src.kg.schema import Entity, Relation
 
 
-class TechnicalAgent(BaseAgent):
+class TechnicalAgent(BaseAgent[Tuple[List[Entity], List[Relation]]]):
     def __init__(self) -> None:
         super().__init__("technical_agent")
 

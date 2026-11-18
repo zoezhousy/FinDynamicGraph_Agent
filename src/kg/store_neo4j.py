@@ -44,7 +44,9 @@ class Neo4jKGStore:
         self._database = database
 
     def close(self) -> None:
-        self._driver.close()
+        driver, self._driver = self._driver, None
+        if driver is not None:
+            driver.close()
 
     def init_constraints(self) -> None:
         cypher_statements = [
@@ -282,7 +284,7 @@ n        Args:
             if rel_type not in _ALLOWED_REL_TYPES:
                 raise ValueError(f"Unsupported relationship type: {rel_type}")
             data = relation.model_dump()
-            for key in ("as_of_date", "valid_from", "valid_to"):
+            for key in ("as_of_date", "valid_from", "valid_to", "effective_at"):
                 if data.get(key) is not None:
                     data[key] = data[key].isoformat()
             grouped.setdefault(rel_type, []).append(data)
@@ -300,6 +302,7 @@ n        Args:
                     r.direction = row.direction,
                     r.valid_from = row.valid_from,
                     r.valid_to = row.valid_to,
+                    r.effective_at = row.effective_at,
                     r.evidence_ids = row.evidence_ids
                 """
                 session.run(query, rows=rows)
@@ -481,6 +484,7 @@ n        Args:
             props.setdefault("version", 1)
             props.setdefault("valid_from", props.get("as_of_date", now_iso))
             props.setdefault("valid_to", None)
+            props.setdefault("effective_at", props.get("valid_from"))
             props.setdefault("supersedes_id", None)
             by_label.setdefault(entity.type, []).append(props)
 
@@ -506,13 +510,17 @@ n        Args:
         for evidence in evidences:
             data = evidence.model_dump()
             now_iso = (data.get("ingested_at") or datetime.utcnow()).isoformat()
-            if data["published_at"] is not None:
-                data["published_at"] = data["published_at"].isoformat()
+            for key in ("published_at", "valid_from", "valid_to", "effective_at"):
+                if data.get(key) is not None:
+                    data[key] = data[key].isoformat()
             data["entity_id"] = evidence.evidence_id
             data["entity_type"] = "Evidence"
             data.setdefault("ingested_at", now_iso)
-            data.setdefault("valid_from", data.get("published_at", now_iso))
+            if not data.get("valid_from"):
+                data["valid_from"] = data.get("published_at") or now_iso
             data.setdefault("valid_to", None)
+            if not data.get("effective_at"):
+                data["effective_at"] = data.get("published_at") or data["valid_from"]
             data.setdefault("supersedes_id", None)
             data.setdefault("is_active", True)
             data.setdefault("version", 1)
@@ -541,10 +549,12 @@ n        Args:
                 raise ValueError(f"Unsupported relationship type: {rel_type}")
             data = relation.model_dump()
             now_iso = (data.get("ingested_at") or datetime.utcnow()).isoformat()
-            for key in ("as_of_date", "valid_from", "valid_to"):
+            for key in ("as_of_date", "valid_from", "valid_to", "effective_at"):
                 if data.get(key) is not None:
                     data[key] = data[key].isoformat()
             data.setdefault("ingested_at", now_iso)
+            if not data.get("effective_at"):
+                data["effective_at"] = data.get("valid_from") or data["as_of_date"]
             data.setdefault("supersedes_id", None)
             data.setdefault("is_active", True)
             data.setdefault("version", 1)
@@ -563,6 +573,7 @@ n        Args:
                     r.direction = row.direction,
                     r.valid_from = row.valid_from,
                     r.valid_to = row.valid_to,
+                    r.effective_at = row.effective_at,
                     r.evidence_ids = row.evidence_ids,
                     r.version = coalesce(r.version, 0) + 1,
                     r.ingested_at = row.ingested_at,
@@ -661,3 +672,63 @@ n        Args:
         except Exception as exc:
             logging.error("Neo4j health check failed: %s", exc)
             return False
+
+
+    def ensure_research_constraints(self):
+        """Uniqueness is required before transactional research writes."""
+        with self._driver.session(database=self._database) as session:
+            for label in ("ResearchGraphState", "ResearchClaim", "ResearchEvidence"):
+                session.run(f"CREATE CONSTRAINT research_{label.lower()}_identity IF NOT EXISTS FOR (n:{label}) REQUIRE n.research_id IS UNIQUE").consume()
+        self._research_constraints_ready = True
+
+    def commit_research_graph(self, namespace, ticker, before_digest, state):
+        """Atomically persist an isolated research ledger; never touch legacy nodes."""
+        import re
+        from src.eval.records import digest
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", namespace) or state.get("ticker") != ticker:
+            raise ValueError("Invalid research namespace or ticker")
+        if not getattr(self, "_research_constraints_ready", False):
+            self.ensure_research_constraints()
+        prefix = f"research:{namespace}:{digest(ticker)[:16]}:"
+        claims = [{"research_id": prefix + c["entity_id"], "claim_id": c["entity_id"],
+                   "payload": json.dumps(c, ensure_ascii=False), "effective_at": c["effective_at"],
+                   "valid_to": c.get("valid_to"), "version": c["version"]} for c in state["claims"]]
+        evidences = [{"research_id": prefix + eid, "evidence_id": eid, "payload": json.dumps(row, ensure_ascii=False),
+                      "published_at": row["published_at"]} for eid, row in state["evidences"].items()]
+        relations = [{"edge_id": digest(edge), "start_id": prefix + edge["start_id"], "end_id": prefix + edge["end_id"],
+                      "type": edge["type"], "effective_at": edge["effective_at"]} for edge in state["relations"]]
+        after_digest = digest(state)
+
+        def commit(tx):
+            rec = tx.run("""
+                MERGE (s:ResearchGraphState {research_id: $state_id})
+                ON CREATE SET s.state_digest = $before, s.lock_version = 0
+                SET s.lock_version = s.lock_version + 1
+                RETURN s.state_digest AS state_digest
+                """, state_id=prefix + "state", before=before_digest).single()
+            # Retrying a committed transaction is idempotent; concurrent changes are rejected.
+            if rec["state_digest"] == after_digest:
+                return
+            if rec["state_digest"] != before_digest:
+                raise ValueError("Research graph state changed; refusing concurrent overwrite")
+            tx.run("""UNWIND $rows AS row
+                MERGE (c:ResearchClaim {research_id: row.research_id})
+                SET c.claim_id = row.claim_id, c.payload = row.payload,
+                    c.effective_at = row.effective_at, c.valid_to = row.valid_to, c.version = row.version
+                """, rows=claims).consume()
+            tx.run("""UNWIND $rows AS row
+                MERGE (e:ResearchEvidence {research_id: row.research_id})
+                SET e.evidence_id = row.evidence_id, e.payload = row.payload, e.published_at = row.published_at
+                """, rows=evidences).consume()
+            tx.run("""UNWIND $rows AS row
+                MATCH (a {research_id: row.start_id}), (b {research_id: row.end_id})
+                MERGE (a)-[r:RESEARCH_LINK {edge_id: row.edge_id}]->(b)
+                SET r.kind = row.type, r.effective_at = row.effective_at
+                """, rows=relations).consume()
+            tx.run("""MATCH (s:ResearchGraphState {research_id: $state_id})
+                SET s.state_digest = $after, s.payload = $payload
+                """, state_id=prefix + "state", after=after_digest,
+                payload=json.dumps(state, ensure_ascii=False)).consume()
+
+        with self._driver.session(database=self._database) as session:
+            session.execute_write(commit)

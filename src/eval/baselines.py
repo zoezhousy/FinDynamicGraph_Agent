@@ -25,6 +25,7 @@ from src.agents.roles import (
 )
 from src.llm.client import OpenAICompatibleClient
 from src.llm.prompts import AGENT_SYSTEM_PROMPT
+from src.eval.execution import note_issue, record_call, record_snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -54,9 +55,9 @@ Decide: buy, sell, hold, or abstain.
 """
 
 
-def baseline_no_kg_no_evidence(ticker: str, trade_date: datetime) -> Dict[str, Any]:
+def baseline_no_kg_no_evidence(ticker: str, trade_date: datetime, *, model_client=None) -> Dict[str, Any]:
     """Baseline 1: Pure LLM with no external data or KG."""
-    client = OpenAICompatibleClient()
+    client = model_client or OpenAICompatibleClient()
     try:
         payload = client.generate_json(
             _NO_KG_SYSTEM_PROMPT,
@@ -65,10 +66,15 @@ def baseline_no_kg_no_evidence(ticker: str, trade_date: datetime) -> Dict[str, A
                 trade_date=trade_date.date().isoformat(),
             ),
         )
-    except Exception:
+    except Exception as exc:
+        note_issue("direct_llm", exc)
         # If LLM fails, abstain.
         payload = {}
 
+    return decision_no_evidence(payload, ticker, trade_date)
+
+
+def decision_no_evidence(payload, ticker, trade_date):
     action = str(payload.get("action") or "abstain").lower()
     if action not in {"buy", "sell", "hold", "abstain"}:
         action = "abstain"
@@ -252,14 +258,15 @@ def baseline_evidence_no_kg(
     ticker: str,
     trade_date: datetime,
     data_root: Path | None = None,
+    *, model_client=None, evidence_text=None,
 ) -> Dict[str, Any]:
     """Baseline 2: LLM with raw evidence text (no KG structure)."""
     if data_root is None:
         data_root = Path("data/raw/market_news")
 
-    ohlcv_summary, news_text = _load_raw_evidence(ticker, trade_date, data_root)
+    ohlcv_summary, news_text = evidence_text if evidence_text is not None else _load_raw_evidence(ticker, trade_date, data_root)
 
-    client = OpenAICompatibleClient()
+    client = model_client or OpenAICompatibleClient()
     try:
         payload = client.generate_json(
             _EVIDENCE_SYSTEM_PROMPT,
@@ -270,9 +277,14 @@ def baseline_evidence_no_kg(
                 news_text=news_text,
             ),
         )
-    except Exception:
+    except Exception as exc:
+        note_issue("evidence_llm", exc)
         payload = {}
 
+    return decision_evidence(payload, ticker, trade_date)
+
+
+def decision_evidence(payload, ticker, trade_date):
     stance = _normalize_stance(payload.get("stance"))
     confidence = _safe_float(payload.get("confidence"), 0.3, 0.0, 1.0)
     score = _safe_float(payload.get("score"), 0.0, -1.0, 1.0)
@@ -328,6 +340,7 @@ def baseline_static_kg(
     trade_date: datetime,
     kg_context=None,
     static_cutoff: datetime | None = None,
+    *, model_client=None, llm=None,
 ) -> Dict[str, Any]:
     """Baseline 3: Full KG pipeline but with frozen (static) graph.
 
@@ -358,9 +371,9 @@ def baseline_static_kg(
     backend = os.getenv("AGENT_BACKEND", "langgraph")
 
     if backend == "langgraph":
-        return _baseline_static_kg_langgraph(ticker, trade_date, kg_context, cutoff)
+        return _baseline_static_kg_langgraph(ticker, trade_date, kg_context, cutoff, llm=llm)
     else:
-        return _baseline_static_kg_legacy(ticker, trade_date, kg_context, cutoff)
+        return _baseline_static_kg_legacy(ticker, trade_date, kg_context, cutoff, model_client=model_client)
 
 
 def _baseline_static_kg_langgraph(
@@ -368,6 +381,7 @@ def _baseline_static_kg_langgraph(
     trade_date: datetime,
     kg_context,
     cutoff: datetime,
+    *, llm=None,
 ) -> Dict[str, Any]:
     """Static KG baseline using LangGraph agents with FixedCutoffPolicy."""
     import asyncio
@@ -378,7 +392,7 @@ def _baseline_static_kg_langgraph(
         create_fundamental_agent, create_risk_agent,
     )
 
-    llm = make_llm()
+    llm = llm or make_llm()
     cutoff_str = cutoff.date().isoformat()
     tools = build_kg_tools(kg_context.query_client, FixedCutoffPolicy(cutoff_str))
 
@@ -398,12 +412,14 @@ def _baseline_static_kg_langgraph(
             try:
                 async with semaphore:
                     result = await asyncio.wait_for(agent.ainvoke(input_data), timeout=90)
+                record_call({"backend": "langgraph", "role": role, "input": input_data, "messages": [{"type": getattr(m, "type", "message"), "content": m.content, "tool_calls": getattr(m, "tool_calls", [])} for m in result["messages"]], "retry_count": None})
                 last_content = result["messages"][-1].content
                 schema = _extract_report(last_content, role)
                 if schema:
                     return AgentReport(role=role, **schema.model_dump())
-            except Exception:
-                pass
+                note_issue(role, reason="unparseable_output")
+            except Exception as exc:
+                note_issue(role, exc)
             return AgentReport(
                 role=role, stance="uncertain", confidence=0.0, score=0.0,
                 summary=f"{role} agent failed — no data available.",
@@ -426,6 +442,7 @@ def _baseline_static_kg_langgraph(
         raise RuntimeError("Event loop already running.")
 
     subgraph = kg_context.load_subgraph(ticker, cutoff)
+    record_snapshot(subgraph)
     decision = portfolio_manager_decide(ticker, trade_date, reports, subgraph=subgraph)
     decision["baseline"] = "static_kg"
     return decision
@@ -436,6 +453,7 @@ def _baseline_static_kg_legacy(
     trade_date: datetime,
     kg_context,
     cutoff: datetime,
+    *, model_client=None,
 ) -> Dict[str, Any]:
     """Static KG baseline using legacy direct LLM calls."""
     from src.agents.fundamental_agent import FundamentalAgent
@@ -443,12 +461,13 @@ def _baseline_static_kg_legacy(
     from src.agents.roles import news_agent, technical_agent
 
     subgraph = kg_context.load_subgraph(ticker, cutoff)
+    record_snapshot(subgraph)
 
-    fundamental_agent_runner = FundamentalAgent()
-    risk_agent_runner = RiskAgent()
+    fundamental_agent_runner = FundamentalAgent(client=model_client)
+    risk_agent_runner = RiskAgent(client=model_client)
 
     reports: list[AgentReport] = []
-    reports.append(news_agent(subgraph, ticker, trade_date))
+    reports.append(news_agent(subgraph, ticker, trade_date, **({"client": model_client} if model_client is not None else {})))
     reports.append(technical_agent(subgraph, ticker, trade_date))
     reports.append(
         fundamental_agent_runner.run(

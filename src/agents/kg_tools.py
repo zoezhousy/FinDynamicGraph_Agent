@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List
 
-from langchain_core.tools import tool
 
 from src.kg.query import KGQueryClient
 
@@ -27,8 +26,11 @@ class KGAgentContext:
     def __init__(self, query_client: KGQueryClient) -> None:
         self.query_client = query_client
 
-    def load_subgraph(self, ticker: str, trade_date: datetime) -> Dict[str, List[Dict[str, Any]]]:
-        return self.query_client.get_ticker_subgraph(ticker, trade_date)
+    def load_subgraph(self, ticker: str, as_of_date: datetime) -> Dict[str, List[Dict[str, Any]]]:
+        """Canonical point-in-time query entry used by every KG system."""
+        if not isinstance(as_of_date, datetime):
+            raise TypeError("as_of_date must be a datetime")
+        return self.query_client.load_subgraph(ticker, as_of_date)
 
     def load_snapshot_summary(self, ticker: str, trade_date: datetime) -> Dict[str, Any]:
         return self.query_client.get_snapshot_summary(ticker, trade_date)
@@ -61,6 +63,7 @@ class FixedCutoffPolicy:
 def build_kg_tools(
     query_client: KGQueryClient,
     date_policy: DynamicDatePolicy | FixedCutoffPolicy,
+    *, bound_ticker=None, bound_date=None, snapshot=None,
 ) -> list:
     """Build LangChain tool set with request-scoped cache.
 
@@ -71,15 +74,26 @@ def build_kg_tools(
     set per ``run_for_ticker_async()`` invocation so different trade dates
     don't share stale data.
     """
+    from langchain_core.tools import tool
+
     _cache: dict[tuple[str, str], dict] = {}
 
     def _get_snapshot(ticker: str, as_of_date: str) -> dict:
+        if snapshot is not None:
+            from copy import deepcopy
+            from src.eval.protocol import HK
+            allowed = {bound_date.isoformat(), bound_date.astimezone(HK).date().isoformat()}
+            if ticker != bound_ticker or as_of_date not in allowed:
+                from src.eval.execution import note_issue
+                note_issue("tool_boundary", reason="request_outside_fixed_snapshot")
+                raise ValueError("Request is outside the fixed ticker/date boundary")
+            return deepcopy(snapshot)
         effective_str = date_policy.resolve(as_of_date)
         key = (ticker, effective_str)
         if key not in _cache:
             logger.debug("KG cache miss: %s as_of=%s (effective=%s)", ticker, as_of_date, effective_str)
             effective_dt = datetime.fromisoformat(effective_str)
-            _cache[key] = query_client.get_ticker_subgraph(ticker, effective_dt)
+            _cache[key] = query_client.load_subgraph(ticker, effective_dt)
         return _cache[key]
 
     @tool

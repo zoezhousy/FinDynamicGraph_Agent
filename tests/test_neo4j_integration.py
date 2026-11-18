@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import os
+import pytest
+
+pytestmark = pytest.mark.integration
 import pandas as pd
 from datetime import datetime
 
@@ -9,9 +12,14 @@ from src.kg.store_neo4j import Neo4jKGStore
 from src.agents.technical_agent import TechnicalAgent
 
 
-URI = "neo4j://localhost:7687"
-USER = "neo4j"
-PASSWORD = os.environ.get("neo4j_password", "testpassword")
+URI = os.getenv("NEO4J_URI", "")
+USER = os.getenv("NEO4J_USER", "")
+PASSWORD = os.getenv("NEO4J_PASSWORD", "")
+
+@pytest.fixture(autouse=True)
+def require_neo4j_credentials():
+    if not (URI and USER and PASSWORD):
+        pytest.skip("NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD are required")
 
 
 def test_store_init_and_health():

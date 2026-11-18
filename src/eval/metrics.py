@@ -16,7 +16,24 @@ from src.eval.grounding import (
 )
 
 
-def directional_accuracy(trades: pd.DataFrame) -> float:
+def _check_evaluation_version(trades, evaluation_version):
+    if evaluation_version not in {"legacy", "v2"}:
+        raise ValueError("evaluation_version must be legacy or v2")
+    if "evaluation_version" in trades and not trades.empty:
+        versions = set(trades["evaluation_version"].fillna("legacy"))
+        if versions != {evaluation_version}:
+            raise ValueError("Cannot mix evaluation versions or use the wrong report version")
+
+
+def directional_accuracy(trades: pd.DataFrame, *, evaluation_version: str = "legacy") -> float:
+    _check_evaluation_version(trades, evaluation_version)
+    if evaluation_version == "v2":
+        executed = trades.loc[trades["trade_executed"]]
+        if executed.empty:
+            return float("nan")
+        if "gross_return" not in executed or not np.isfinite(executed["gross_return"].to_numpy(dtype=float)).all():
+            raise ValueError("v2 directional accuracy requires finite gross_return")
+        return float((executed["gross_return"] > 0).mean())
     if "raw_return" not in trades.columns or "action" not in trades.columns:
         raise ValueError("trades must have 'raw_return' and 'action'.")
     executed = trades[trades["trade_executed"]]
@@ -85,22 +102,23 @@ def mean_stale_evidence_count(trades: pd.DataFrame) -> float:
     return float(trades["stale_evidence_count"].mean())
 
 
-def full_summary_by_system(trades: pd.DataFrame) -> pd.DataFrame:
+def full_summary_by_system(trades: pd.DataFrame, *, evaluation_version: str = "legacy") -> pd.DataFrame:
     """Compute all metrics grouped by system.
 
     Includes trade metrics, grounding metrics, and evidence freshness.
     """
+    _check_evaluation_version(trades, evaluation_version)
     rows = []
     for system_name, group in trades.groupby("system"):
         ret = summarize_returns(group)
-        gnd = compute_grounding_metrics(group)
+        gnd = compute_grounding_metrics(group, evaluation_version=evaluation_version)
         row = {
             "system": system_name,
             "n_decisions": len(group),
             "n_trades": int(ret["n_trades"]),
             "trade_execution_rate": trade_execution_rate(group),
             "win_rate": win_rate(group),
-            "directional_accuracy": directional_accuracy(group),
+            "directional_accuracy": directional_accuracy(group, evaluation_version=evaluation_version),
             "abstain_rate": abstain_rate(group),
             "mean_return": ret["mean_return"],
             "median_return": ret["median_return"],
@@ -114,6 +132,8 @@ def full_summary_by_system(trades: pd.DataFrame) -> pd.DataFrame:
             "unsupported_claim_rate": gnd["unsupported_claim_rate"],
             "stale_evidence_rate": gnd["stale_evidence_rate"],
         }
+        if evaluation_version == "v2":
+            row.update(evaluation_version="v2", unknown_evidence_count=pd.to_numeric(group.get("unknown_evidence_count", pd.Series(dtype=float)), errors="coerce").sum(min_count=1))
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -125,6 +145,7 @@ def full_summary_by_system(trades: pd.DataFrame) -> pd.DataFrame:
 def paired_significance_tests(
     trades: pd.DataFrame,
     alpha: float = 0.05,
+    *, evaluation_version: str = "legacy",
 ) -> pd.DataFrame:
     """Run pairwise paired-significance tests between all systems.
 
@@ -141,6 +162,10 @@ def paired_significance_tests(
 
         Returns an empty DataFrame if fewer than 2 systems exist.
     """
+    _check_evaluation_version(trades, evaluation_version)
+    if evaluation_version == "v2" and not trades.empty:
+        if trades.duplicated(["ticker", "trade_date", "system"]).any():
+            raise ValueError("Duplicate ticker/date/system rows are not valid paired samples")
     if trades.empty or "system" not in trades.columns:
         return pd.DataFrame()
 
@@ -158,10 +183,16 @@ def paired_significance_tests(
 
     # Build per-system correctness aligned on (ticker, trade_date)
     executed = trades[trades["trade_executed"]].copy()
-    if "raw_return" in executed.columns:
+    correctness_field = "gross_return" if evaluation_version == "v2" else "raw_return"
+    if evaluation_version == "v2" and not executed.empty:
+        if correctness_field not in executed or not np.isfinite(executed[correctness_field].to_numpy(dtype=float)).all():
+            raise ValueError("v2 directional tests require finite gross_return")
+    if correctness_field in executed.columns:
         executed = executed.assign(
-            _correct=(executed["raw_return"] > 0).astype(int)
+            _correct=(executed[correctness_field] > 0).astype(int)
         )
+    if evaluation_version == "v2" and executed.empty:
+        executed["_correct"] = pd.Series(dtype=int)
     correct_pivot = executed.pivot_table(
         index=["ticker", "trade_date"],
         columns="system",
@@ -204,6 +235,9 @@ def paired_significance_tests(
                     "significant": bool(p_wilcoxon < alpha) if not np.isnan(p_wilcoxon) else False,
                 })
 
+                if evaluation_version == "v2":
+                    rows[-1].update(n_pairs=n_pairs, effect=float(np.mean(diffs)) if n_pairs else float("nan"), effect_measure="mean_net_return_difference")
+
             # ── McNemar's test on directional correctness ───────────
             if sys_a in correct_pivot.columns and sys_b in correct_pivot.columns:
                 cpair = correct_pivot[[sys_a, sys_b]].dropna()
@@ -236,4 +270,18 @@ def paired_significance_tests(
                     "significant": bool(p_mcnemar < alpha) if not np.isnan(p_mcnemar) else False,
                 })
 
-    return pd.DataFrame(rows)
+                if evaluation_version == "v2":
+                    rows[-1].update(n_pairs=len(cpair), n_discordant=n_discordant, effect=float(np.mean(a_ok - b_ok)) if len(cpair) else float("nan"), effect_measure="directional_accuracy_difference")
+
+    result = pd.DataFrame(rows)
+    if evaluation_version == "v2" and not result.empty:
+        result["evaluation_version"] = "v2"
+        result["p_value_adjusted"] = float("nan")
+        finite = result.index[np.isfinite(result["p_value"].to_numpy(dtype=float))]
+        ordered = sorted(finite, key=lambda index: result.at[index, "p_value"])
+        previous = 0.0
+        for rank, index in enumerate(ordered):
+            previous = max(previous, min(1.0, (len(ordered) - rank) * result.at[index, "p_value"]))
+            result.at[index, "p_value_adjusted"] = previous
+        result["significant_adjusted"] = result["p_value_adjusted"] < alpha
+    return result

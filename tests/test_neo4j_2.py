@@ -1,27 +1,7 @@
-import os
-from neo4j import GraphDatabase
-from dotenv import load_dotenv
+import pytest
+pytestmark = pytest.mark.integration
 
-load_dotenv()
-
-NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://127.0.0.1:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
-
-if not NEO4J_PASSWORD:
-    raise ValueError("NEO4J_PASSWORD is not set in environment variables.")
-
-driver = GraphDatabase.driver(
-    NEO4J_URI,
-    auth=(NEO4J_USER, NEO4J_PASSWORD)
-)
-
-driver.verify_connectivity()
-print("Neo4j connected successfully.")
-
-with driver.session(database=NEO4J_DATABASE) as session:
-    result = session.run("RETURN 'Hello Neo4j' AS msg")
-    print(result.single()["msg"])
-
-driver.close()
+def test_neo4j_query(neo4j_driver):
+    import os
+    with neo4j_driver.session(database=os.getenv("NEO4J_DATABASE", "neo4j")) as session:
+        assert session.run("RETURN 'Hello Neo4j' AS msg").single()["msg"] == 'Hello Neo4j'

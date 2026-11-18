@@ -18,8 +18,6 @@ import logging
 import os
 import re
 
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from src.agents.schemas import AgentReportSchema
@@ -53,6 +51,7 @@ Rules:
 
 def make_llm() -> ChatOpenAI:
     """Create a ChatOpenAI instance from environment variables."""
+    from langchain_openai import ChatOpenAI
     return ChatOpenAI(
         base_url=os.getenv("LLM_API_BASE"),
         api_key=os.getenv("LLM_API_KEY"),
@@ -128,6 +127,7 @@ def _extract_report(content: str, role: str) -> AgentReportSchema | None:
 def create_news_agent(llm: ChatOpenAI, tools: list):
     """Create a news analyst LangGraph agent."""
     subset = [t for t in tools if t.name in ("query_subgraph", "query_news", "query_claims")]
+    from langchain.agents import create_agent
     return create_agent(
         model=llm,
         tools=subset,
@@ -138,6 +138,7 @@ def create_news_agent(llm: ChatOpenAI, tools: list):
 def create_technical_agent(llm: ChatOpenAI, tools: list):
     """Create a technical analyst LangGraph agent."""
     subset = [t for t in tools if t.name in ("query_signals", "query_subgraph")]
+    from langchain.agents import create_agent
     return create_agent(
         model=llm,
         tools=subset,
@@ -148,6 +149,7 @@ def create_technical_agent(llm: ChatOpenAI, tools: list):
 def create_fundamental_agent(llm: ChatOpenAI, tools: list):
     """Create a fundamental analyst LangGraph agent."""
     subset = [t for t in tools if t.name in ("query_fundamentals", "query_claims", "query_subgraph")]
+    from langchain.agents import create_agent
     return create_agent(
         model=llm,
         tools=subset,
@@ -158,6 +160,7 @@ def create_fundamental_agent(llm: ChatOpenAI, tools: list):
 def create_risk_agent(llm: ChatOpenAI, tools: list):
     """Create a risk analyst LangGraph agent."""
     subset = [t for t in tools if t.name in ("query_risks", "query_claims", "query_subgraph")]
+    from langchain.agents import create_agent
     return create_agent(
         model=llm,
         tools=subset,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from neo4j import GraphDatabase, basic_auth
@@ -18,9 +18,11 @@ class KGQueryClient:
         self._database = database
 
     def close(self) -> None:
-        self._driver.close()
+        driver, self._driver = self._driver, None
+        if driver is not None:
+            driver.close()
 
-    def get_ticker_subgraph(
+    def load_subgraph(
         self,
         ticker: str,
         as_of_date: datetime,
@@ -29,13 +31,17 @@ class KGQueryClient:
         signal_window_days: int = 90,
         news_window_days: int = 30,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Get ticker subgraph with strict temporal filtering.
+        """Load the ticker subgraph exactly as it was valid at ``as_of_date``.
 
         Avoids future leakage by enforcing:
         - valid_from <= as_of_date
         - valid_to IS NULL OR valid_to > as_of_date
-        - is_active = true (when field exists)
+        - effective_at IS NULL OR effective_at <= as_of_date
         - published_at <= as_of_date (for evidence/news)
+
+        ``is_active`` deliberately is not used here.  It describes the graph's
+        current state and would incorrectly hide a record that was active at a
+        historical decision date but expired later.
         """
         signal_from = as_of_date - timedelta(days=signal_window_days)
         news_from = as_of_date - timedelta(days=news_window_days)
@@ -45,108 +51,186 @@ class KGQueryClient:
 
         cypher = """
         MATCH (c:Company {ticker: $ticker})
-
-        // ── Signals ──
-        OPTIONAL MATCH (c)-[r1:HAS_SIGNAL]->(s:IndicatorSignal)
+        // Aggregate independent branches before joining them.
+        CALL {
+          WITH c
+          OPTIONAL MATCH (c)-[r1:HAS_SIGNAL]->(s:IndicatorSignal)
         WHERE datetime(r1.as_of_date) <= datetime($as_of)
           AND datetime(r1.as_of_date) >= datetime($signal_from)
           AND (r1.valid_from IS NULL OR datetime(r1.valid_from) <= datetime($as_of))
           AND (r1.valid_to IS NULL OR datetime(r1.valid_to) > datetime($as_of))
-          AND (r1.is_active IS NULL OR r1.is_active = true)
+          AND (r1.effective_at IS NULL OR datetime(r1.effective_at) <= datetime($as_of))
+          AND (s.valid_from IS NULL OR datetime(s.valid_from) <= datetime($as_of))
+          AND (s.valid_to IS NULL OR datetime(s.valid_to) > datetime($as_of))
+          AND (s.effective_at IS NULL OR datetime(s.effective_at) <= datetime($as_of))
 
         // ── Fundamentals ──
-        OPTIONAL MATCH (c)-[rf:HAS_SIGNAL]->(f:FundamentalSignal)
+        
+          RETURN collect(DISTINCT s) AS raw_signals
+        }
+        CALL {
+          WITH c
+          OPTIONAL MATCH (c)-[rf:HAS_SIGNAL]->(f:FundamentalSignal)
         WHERE datetime(rf.as_of_date) <= datetime($as_of)
           AND (rf.valid_from IS NULL OR datetime(rf.valid_from) <= datetime($as_of))
           AND (rf.valid_to IS NULL OR datetime(rf.valid_to) > datetime($as_of))
-          AND (rf.is_active IS NULL OR rf.is_active = true)
+          AND (rf.effective_at IS NULL OR datetime(rf.effective_at) <= datetime($as_of))
+          AND (f.valid_from IS NULL OR datetime(f.valid_from) <= datetime($as_of))
+          AND (f.valid_to IS NULL OR datetime(f.valid_to) > datetime($as_of))
+          AND (f.effective_at IS NULL OR datetime(f.effective_at) <= datetime($as_of))
 
         // ── Risks ──
-        OPTIONAL MATCH (c)-[rr:HAS_RISK]->(r:RiskEvent)
+        OPTIONAL MATCH (f)-[rfe:SUPPORTED_BY]->(fe:Evidence)
+          WHERE (fe.published_at IS NULL OR datetime(fe.published_at) <= datetime($as_of))
+            AND (fe.valid_from IS NULL OR datetime(fe.valid_from) <= datetime($as_of))
+            AND (fe.valid_to IS NULL OR datetime(fe.valid_to) > datetime($as_of))
+            AND (fe.effective_at IS NULL OR datetime(fe.effective_at) <= datetime($as_of))
+            AND (rfe.valid_from IS NULL OR datetime(rfe.valid_from) <= datetime($as_of))
+            AND (rfe.valid_to IS NULL OR datetime(rfe.valid_to) > datetime($as_of))
+            AND (rfe.effective_at IS NULL OR datetime(rfe.effective_at) <= datetime($as_of))
+        OPTIONAL MATCH (src_fund:SourceDocument)-[rsf:CONTAINS_EVIDENCE]->(fe)
+          WHERE (src_fund.valid_from IS NULL OR datetime(src_fund.valid_from) <= datetime($as_of))
+            AND (src_fund.valid_to IS NULL OR datetime(src_fund.valid_to) > datetime($as_of))
+            AND (src_fund.effective_at IS NULL OR datetime(src_fund.effective_at) <= datetime($as_of))
+            AND (rsf.valid_from IS NULL OR datetime(rsf.valid_from) <= datetime($as_of))
+            AND (rsf.valid_to IS NULL OR datetime(rsf.valid_to) > datetime($as_of))
+            AND (rsf.effective_at IS NULL OR datetime(rsf.effective_at) <= datetime($as_of))
+        OPTIONAL MATCH (fe)-[rfc:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(fc:Claim)
+          WHERE (fc.valid_from IS NULL OR datetime(fc.valid_from) <= datetime($as_of))
+            AND (fc.valid_to IS NULL OR datetime(fc.valid_to) > datetime($as_of))
+            AND (fc.effective_at IS NULL OR datetime(fc.effective_at) <= datetime($as_of))
+            AND (rfc.valid_from IS NULL OR datetime(rfc.valid_from) <= datetime($as_of))
+            AND (rfc.valid_to IS NULL OR datetime(rfc.valid_to) > datetime($as_of))
+            AND (rfc.effective_at IS NULL OR datetime(rfc.effective_at) <= datetime($as_of))
+        OPTIONAL MATCH (fc)-[cf2:CONFLICTS_WITH]->(other2:Claim)
+          WHERE other2.entity_id <> fc.entity_id
+            AND (other2.valid_from IS NULL OR datetime(other2.valid_from) <= datetime($as_of))
+            AND (other2.valid_to IS NULL OR datetime(other2.valid_to) > datetime($as_of))
+            AND (other2.effective_at IS NULL OR datetime(other2.effective_at) <= datetime($as_of))
+            AND (cf2.valid_from IS NULL OR datetime(cf2.valid_from) <= datetime($as_of))
+            AND (cf2.valid_to IS NULL OR datetime(cf2.valid_to) > datetime($as_of))
+            AND (cf2.effective_at IS NULL OR datetime(cf2.effective_at) <= datetime($as_of))
+        
+          RETURN collect(DISTINCT f) AS fund_nodes,
+                 collect(DISTINCT fe) AS fund_evidences,
+                 collect(DISTINCT src_fund) AS fund_sources,
+                 collect(DISTINCT fc) AS fund_claims,
+                 collect(DISTINCT {a: fc.entity_id, b: other2.entity_id}) AS fund_conflicts
+        }
+        CALL {
+          WITH c
+          OPTIONAL MATCH (c)-[rr:HAS_RISK]->(r:RiskEvent)
         WHERE datetime(rr.as_of_date) <= datetime($as_of)
           AND (rr.valid_from IS NULL OR datetime(rr.valid_from) <= datetime($as_of))
           AND (rr.valid_to IS NULL OR datetime(rr.valid_to) > datetime($as_of))
-          AND (rr.is_active IS NULL OR rr.is_active = true)
+          AND (rr.effective_at IS NULL OR datetime(rr.effective_at) <= datetime($as_of))
+          AND (r.valid_from IS NULL OR datetime(r.valid_from) <= datetime($as_of))
+          AND (r.valid_to IS NULL OR datetime(r.valid_to) > datetime($as_of))
+          AND (r.effective_at IS NULL OR datetime(r.effective_at) <= datetime($as_of))
 
         // ── News ──
-        OPTIONAL MATCH (c)-[r2:MENTIONED_IN]->(n:NewsEvent)
+        OPTIONAL MATCH (r)-[rre:SUPPORTED_BY]->(re:Evidence)
+          WHERE (re.published_at IS NULL OR datetime(re.published_at) <= datetime($as_of))
+            AND (re.valid_from IS NULL OR datetime(re.valid_from) <= datetime($as_of))
+            AND (re.valid_to IS NULL OR datetime(re.valid_to) > datetime($as_of))
+            AND (re.effective_at IS NULL OR datetime(re.effective_at) <= datetime($as_of))
+            AND (rre.valid_from IS NULL OR datetime(rre.valid_from) <= datetime($as_of))
+            AND (rre.valid_to IS NULL OR datetime(rre.valid_to) > datetime($as_of))
+            AND (rre.effective_at IS NULL OR datetime(rre.effective_at) <= datetime($as_of))
+
+        // ── Sources ──
+        OPTIONAL MATCH (src_risk:SourceDocument)-[rsr:CONTAINS_EVIDENCE]->(re)
+          WHERE (src_risk.valid_from IS NULL OR datetime(src_risk.valid_from) <= datetime($as_of))
+            AND (src_risk.valid_to IS NULL OR datetime(src_risk.valid_to) > datetime($as_of))
+            AND (src_risk.effective_at IS NULL OR datetime(src_risk.effective_at) <= datetime($as_of))
+            AND (rsr.valid_from IS NULL OR datetime(rsr.valid_from) <= datetime($as_of))
+            AND (rsr.valid_to IS NULL OR datetime(rsr.valid_to) > datetime($as_of))
+            AND (rsr.effective_at IS NULL OR datetime(rsr.effective_at) <= datetime($as_of))
+
+        // ── Claims ──
+        OPTIONAL MATCH (re)-[rrc:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(rc:Claim)
+          WHERE (rc.valid_from IS NULL OR datetime(rc.valid_from) <= datetime($as_of))
+            AND (rc.valid_to IS NULL OR datetime(rc.valid_to) > datetime($as_of))
+            AND (rc.effective_at IS NULL OR datetime(rc.effective_at) <= datetime($as_of))
+            AND (rrc.valid_from IS NULL OR datetime(rrc.valid_from) <= datetime($as_of))
+            AND (rrc.valid_to IS NULL OR datetime(rrc.valid_to) > datetime($as_of))
+            AND (rrc.effective_at IS NULL OR datetime(rrc.effective_at) <= datetime($as_of))
+
+        // ── Conflicts between claims ──
+        OPTIONAL MATCH (rc)-[cf3:CONFLICTS_WITH]->(other3:Claim)
+          WHERE other3.entity_id <> rc.entity_id
+            AND (other3.valid_from IS NULL OR datetime(other3.valid_from) <= datetime($as_of))
+            AND (other3.valid_to IS NULL OR datetime(other3.valid_to) > datetime($as_of))
+            AND (other3.effective_at IS NULL OR datetime(other3.effective_at) <= datetime($as_of))
+            AND (cf3.valid_from IS NULL OR datetime(cf3.valid_from) <= datetime($as_of))
+            AND (cf3.valid_to IS NULL OR datetime(cf3.valid_to) > datetime($as_of))
+            AND (cf3.effective_at IS NULL OR datetime(cf3.effective_at) <= datetime($as_of))
+
+          RETURN collect(DISTINCT r) AS risk_nodes,
+                 collect(DISTINCT re) AS risk_evidences,
+                 collect(DISTINCT src_risk) AS risk_sources,
+                 collect(DISTINCT rc) AS risk_claims,
+                 collect(DISTINCT {a: rc.entity_id, b: other3.entity_id}) AS risk_conflicts
+        }
+        CALL {
+          WITH c
+          OPTIONAL MATCH (c)-[r2:MENTIONED_IN]->(n:NewsEvent)
         WHERE datetime(r2.as_of_date) <= datetime($as_of)
           AND datetime(r2.as_of_date) >= datetime($news_from)
           AND (r2.valid_from IS NULL OR datetime(r2.valid_from) <= datetime($as_of))
           AND (r2.valid_to IS NULL OR datetime(r2.valid_to) > datetime($as_of))
-          AND (r2.is_active IS NULL OR r2.is_active = true)
+          AND (r2.effective_at IS NULL OR datetime(r2.effective_at) <= datetime($as_of))
+          AND (n.valid_from IS NULL OR datetime(n.valid_from) <= datetime($as_of))
+          AND (n.valid_to IS NULL OR datetime(n.valid_to) > datetime($as_of))
+          AND (n.effective_at IS NULL OR datetime(n.effective_at) <= datetime($as_of))
 
         // ── Evidence via SUPPORTED_BY ──
-        OPTIONAL MATCH (n)-[:SUPPORTED_BY]->(ne:Evidence)
+        OPTIONAL MATCH (n)-[rne:SUPPORTED_BY]->(ne:Evidence)
           WHERE (ne.published_at IS NULL OR datetime(ne.published_at) <= datetime($as_of))
             AND (ne.valid_from IS NULL OR datetime(ne.valid_from) <= datetime($as_of))
             AND (ne.valid_to IS NULL OR datetime(ne.valid_to) > datetime($as_of))
-            AND (ne.is_active IS NULL OR ne.is_active = true)
-        OPTIONAL MATCH (f)-[:SUPPORTED_BY]->(fe:Evidence)
-          WHERE (fe.published_at IS NULL OR datetime(fe.published_at) <= datetime($as_of))
-            AND (fe.valid_from IS NULL OR datetime(fe.valid_from) <= datetime($as_of))
-            AND (fe.valid_to IS NULL OR datetime(fe.valid_to) > datetime($as_of))
-            AND (fe.is_active IS NULL OR fe.is_active = true)
-        OPTIONAL MATCH (r)-[:SUPPORTED_BY]->(re:Evidence)
-          WHERE (re.published_at IS NULL OR datetime(re.published_at) <= datetime($as_of))
-            AND (re.valid_from IS NULL OR datetime(re.valid_from) <= datetime($as_of))
-            AND (re.valid_to IS NULL OR datetime(re.valid_to) > datetime($as_of))
-            AND (re.is_active IS NULL OR re.is_active = true)
-
-        // ── Sources ──
-        OPTIONAL MATCH (src_news:SourceDocument)-[:CONTAINS_EVIDENCE]->(ne)
-          WHERE (src_news.is_active IS NULL OR src_news.is_active = true)
-        OPTIONAL MATCH (src_fund:SourceDocument)-[:CONTAINS_EVIDENCE]->(fe)
-          WHERE (src_fund.is_active IS NULL OR src_fund.is_active = true)
-        OPTIONAL MATCH (src_risk:SourceDocument)-[:CONTAINS_EVIDENCE]->(re)
-          WHERE (src_risk.is_active IS NULL OR src_risk.is_active = true)
-
-        // ── Claims ──
-        OPTIONAL MATCH (ne)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(nc:Claim)
+            AND (ne.effective_at IS NULL OR datetime(ne.effective_at) <= datetime($as_of))
+            AND (rne.valid_from IS NULL OR datetime(rne.valid_from) <= datetime($as_of))
+            AND (rne.valid_to IS NULL OR datetime(rne.valid_to) > datetime($as_of))
+            AND (rne.effective_at IS NULL OR datetime(rne.effective_at) <= datetime($as_of))
+        OPTIONAL MATCH (src_news:SourceDocument)-[rsn:CONTAINS_EVIDENCE]->(ne)
+          WHERE (src_news.valid_from IS NULL OR datetime(src_news.valid_from) <= datetime($as_of))
+            AND (src_news.valid_to IS NULL OR datetime(src_news.valid_to) > datetime($as_of))
+            AND (src_news.effective_at IS NULL OR datetime(src_news.effective_at) <= datetime($as_of))
+            AND (rsn.valid_from IS NULL OR datetime(rsn.valid_from) <= datetime($as_of))
+            AND (rsn.valid_to IS NULL OR datetime(rsn.valid_to) > datetime($as_of))
+            AND (rsn.effective_at IS NULL OR datetime(rsn.effective_at) <= datetime($as_of))
+        OPTIONAL MATCH (ne)-[rnc:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(nc:Claim)
           WHERE (nc.valid_from IS NULL OR datetime(nc.valid_from) <= datetime($as_of))
             AND (nc.valid_to IS NULL OR datetime(nc.valid_to) > datetime($as_of))
-            AND (nc.is_active IS NULL OR nc.is_active = true)
-        OPTIONAL MATCH (fe)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(fc:Claim)
-          WHERE (fc.valid_from IS NULL OR datetime(fc.valid_from) <= datetime($as_of))
-            AND (fc.valid_to IS NULL OR datetime(fc.valid_to) > datetime($as_of))
-            AND (fc.is_active IS NULL OR fc.is_active = true)
-        OPTIONAL MATCH (re)-[:SUPPORTS_CLAIM|CONTRADICTS_CLAIM]->(rc:Claim)
-          WHERE (rc.valid_from IS NULL OR datetime(rc.valid_from) <= datetime($as_of))
-            AND (rc.valid_to IS NULL OR datetime(rc.valid_to) > datetime($as_of))
-            AND (rc.is_active IS NULL OR rc.is_active = true)
-
-        // ── Conflicts between claims ──
+            AND (nc.effective_at IS NULL OR datetime(nc.effective_at) <= datetime($as_of))
+            AND (rnc.valid_from IS NULL OR datetime(rnc.valid_from) <= datetime($as_of))
+            AND (rnc.valid_to IS NULL OR datetime(rnc.valid_to) > datetime($as_of))
+            AND (rnc.effective_at IS NULL OR datetime(rnc.effective_at) <= datetime($as_of))
         OPTIONAL MATCH (nc)-[cf1:CONFLICTS_WITH]->(other1:Claim)
           WHERE other1.entity_id <> nc.entity_id
-            AND (other1.is_active IS NULL OR other1.is_active = true)
-        OPTIONAL MATCH (fc)-[cf2:CONFLICTS_WITH]->(other2:Claim)
-          WHERE other2.entity_id <> fc.entity_id
-            AND (other2.is_active IS NULL OR other2.is_active = true)
-        OPTIONAL MATCH (rc)-[cf3:CONFLICTS_WITH]->(other3:Claim)
-          WHERE other3.entity_id <> rc.entity_id
-            AND (other3.is_active IS NULL OR other3.is_active = true)
-
-        WITH c,
-             [x IN collect(DISTINCT s) WHERE x IS NOT NULL] AS raw_signals,
-             [x IN collect(DISTINCT f) WHERE x IS NOT NULL] AS raw_fundamentals,
-             [x IN collect(DISTINCT r) WHERE x IS NOT NULL] AS raw_risks,
-             [x IN collect(DISTINCT n) WHERE x IS NOT NULL] AS raw_news,
-             [x IN collect(DISTINCT ne) + collect(DISTINCT fe) + collect(DISTINCT re) WHERE x IS NOT NULL] AS raw_evidences,
-             [x IN collect(DISTINCT src_news) + collect(DISTINCT src_fund) + collect(DISTINCT src_risk) WHERE x IS NOT NULL] AS raw_sources,
-             [x IN collect(DISTINCT nc) + collect(DISTINCT fc) + collect(DISTINCT rc) WHERE x IS NOT NULL] AS raw_claims,
-             collect(DISTINCT {a: nc.entity_id, b: other1.entity_id}) +
-             collect(DISTINCT {a: fc.entity_id, b: other2.entity_id}) +
-             collect(DISTINCT {a: rc.entity_id, b: other3.entity_id}) AS raw_conflict_pairs
-
+            AND (other1.valid_from IS NULL OR datetime(other1.valid_from) <= datetime($as_of))
+            AND (other1.valid_to IS NULL OR datetime(other1.valid_to) > datetime($as_of))
+            AND (other1.effective_at IS NULL OR datetime(other1.effective_at) <= datetime($as_of))
+            AND (cf1.valid_from IS NULL OR datetime(cf1.valid_from) <= datetime($as_of))
+            AND (cf1.valid_to IS NULL OR datetime(cf1.valid_to) > datetime($as_of))
+            AND (cf1.effective_at IS NULL OR datetime(cf1.effective_at) <= datetime($as_of))
+        
+          RETURN collect(DISTINCT n) AS news_nodes,
+                 collect(DISTINCT ne) AS news_evidences,
+                 collect(DISTINCT src_news) AS news_sources,
+                 collect(DISTINCT nc) AS news_claims,
+                 collect(DISTINCT {a: nc.entity_id, b: other1.entity_id}) AS news_conflicts
+        }
         RETURN c,
                raw_signals[0..$max_signals] AS signals,
-               raw_fundamentals AS fundamentals,
-               raw_risks AS risks,
-               raw_news[0..$max_news] AS news,
-               raw_evidences AS evidences,
-               raw_sources AS sources,
-               raw_claims AS claims,
-               raw_conflict_pairs AS conflict_pairs
+               fund_nodes AS fundamentals,
+               risk_nodes AS risks,
+               news_nodes[0..$max_news] AS news,
+               news_evidences + fund_evidences + risk_evidences AS evidences,
+               news_sources + fund_sources + risk_sources AS sources,
+               news_claims + fund_claims + risk_claims AS claims,
+               news_conflicts + fund_conflicts + risk_conflicts AS conflict_pairs
         """
 
         with self._driver.session(database=self._database) as session:
@@ -219,7 +303,45 @@ class KGQueryClient:
                 "conflicts": conflicts,
             }
 
+    def get_ticker_subgraph(
+        self,
+        ticker: str,
+        as_of_date: datetime,
+        max_news: int = 20,
+        max_signals: int = 50,
+        signal_window_days: int = 90,
+        news_window_days: int = 30,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Backward-compatible alias for :meth:`load_subgraph`."""
+        return self.load_subgraph(
+            ticker=ticker,
+            as_of_date=as_of_date,
+            max_news=max_news,
+            max_signals=max_signals,
+            signal_window_days=signal_window_days,
+            news_window_days=news_window_days,
+        )
+
     def get_snapshot_summary(
+        self,
+        ticker: str,
+        as_of_date: datetime,
+    ) -> dict[str, Any]:
+        """Summarise the same canonical point-in-time subgraph agents use."""
+        subgraph = self.load_subgraph(ticker, as_of_date)
+        return compute_snapshot_summary_from_lists(
+            ticker=ticker,
+            as_of_date=as_of_date,
+            claims=subgraph.get("claims", []),
+            evidences=subgraph.get("evidences", []),
+            signals=(
+                subgraph.get("signals", [])
+                + subgraph.get("fundamentals", [])
+                + subgraph.get("risks", [])
+            ),
+        )
+
+    def _get_snapshot_summary_legacy(
         self,
         ticker: str,
         as_of_date: datetime,
@@ -407,11 +529,11 @@ def filter_claims_by_date(
     for claim in claims:
         valid_from = _parse_dt_safe(claim.get("valid_from"))
         valid_to = _parse_dt_safe(claim.get("valid_to"))
-        is_active = claim.get("is_active", True)
+        effective_at = _parse_dt_safe(claim.get("effective_at"))
 
-        if not is_active:
-            continue
         if valid_from and valid_from > as_of:
+            continue
+        if effective_at and effective_at > as_of:
             continue
         if valid_to and valid_to <= as_of:
             continue
@@ -431,13 +553,13 @@ def filter_evidence_by_date(
         published_at = _parse_dt_safe(ev.get("published_at"))
         valid_from = _parse_dt_safe(ev.get("valid_from"))
         valid_to = _parse_dt_safe(ev.get("valid_to"))
-        is_active = ev.get("is_active", True)
+        effective_at = _parse_dt_safe(ev.get("effective_at"))
 
-        if not is_active:
-            continue
         if published_at and published_at > as_of:
             continue
         if valid_from and valid_from > as_of:
+            continue
+        if effective_at and effective_at > as_of:
             continue
         if valid_to and valid_to <= as_of:
             continue
@@ -457,13 +579,13 @@ def filter_signals_by_date(
         as_of = _parse_dt_safe(sig.get("as_of_date"))
         valid_from = _parse_dt_safe(sig.get("valid_from"))
         valid_to = _parse_dt_safe(sig.get("valid_to"))
-        is_active = sig.get("is_active", True)
+        effective_at = _parse_dt_safe(sig.get("effective_at"))
 
-        if not is_active:
-            continue
         if as_of and as_of > cutoff:
             continue
         if valid_from and valid_from > cutoff:
+            continue
+        if effective_at and effective_at > cutoff:
             continue
         if valid_to and valid_to <= cutoff:
             continue
@@ -619,8 +741,12 @@ def _parse_dt_safe(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except Exception:
-        return None
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed

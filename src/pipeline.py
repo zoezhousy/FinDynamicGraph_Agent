@@ -18,10 +18,12 @@ from src.collectors.global_news_collector import GlobalNewsCollector
 from src.collectors.market_collector import MarketCollector
 from src.collectors.news_collector import NewsCollector
 from src.collectors.newsapi_collector import NewsAPICollector
-from src.collectors.newsapi_collector import NewsAPICollector
 from src.config import CollectionConfig
 from src.kg.query import KGQueryClient
 from src.kg.schema import Entity
+from src.kg.connections import Neo4jSettings, initialized_store
+from src.kg.ingestion import write_graph_batch
+from src.collectors.cache import dedup_news_frames, resolve_ohlcv_path
 from src.kg.store_neo4j import Neo4jKGStore
 from src.kg.update_pipeline import (
     build_fundamentals_from_frame,
@@ -47,30 +49,35 @@ class PipelineResult:
 class AnalysisPipeline:
     """可复用的分析 Pipeline，封装整个流程：采集 → KG → Agent → 决策 → 报告"""
 
-    def __init__(self, config: CollectionConfig | None = None):
-        load_dotenv()
+    def __init__(self, config: CollectionConfig | None = None, *, kg_store=None, kg_client=None, orchestrator=None, collectors=None, technical_agent=None):
         self.config = config or CollectionConfig()
-        self._kg_store: Neo4jKGStore | None = None
-        self._kg_client: KGQueryClient | None = None
-        self._orchestrator: KGBasedOrchestrator | None = None
-
-    # ── 连接管理 ──
+        self._kg_store = kg_store
+        self._kg_client = kg_client
+        self._orchestrator = orchestrator
+        self._owned = []
+        self._collectors = collectors or {}
+        self._technical_agent = technical_agent
 
     def _ensure_kg(self):
-        """懒初始化 Neo4j 连接"""
-        if self._kg_store is not None:
+        if self._kg_store is not None and self._kg_client is not None:
             return
-        uri = os.getenv("NEO4J_URI")
-        user = os.getenv("NEO4J_USER")
-        pwd = os.getenv("NEO4J_PASSWORD")
-        if not (uri and user and pwd):
-            raise RuntimeError("NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD must be set in .env")
-        self._kg_store = Neo4jKGStore(uri, user, pwd, database=self.config.neo4j_database)
-        if not self._kg_store.health_check():
-            self._kg_store.close()
-            raise RuntimeError("Neo4j health check failed — is it running?")
-        self._kg_store.init_constraints()
-        self._kg_client = KGQueryClient(uri, user, pwd, database=self.config.neo4j_database)
+        settings = Neo4jSettings.from_env(self.config.neo4j_database)
+        created = []
+        try:
+            store = self._kg_store
+            client = self._kg_client
+            if store is None:
+                store = initialized_store(settings, Neo4jKGStore)
+                created.append(store)
+            if client is None:
+                client = settings.create(KGQueryClient)
+                created.append(client)
+        except Exception:
+            for resource in reversed(created):
+                resource.close()
+            raise
+        self._kg_store, self._kg_client = store, client
+        self._owned.extend(created)
 
     def _ensure_orchestrator(self):
         """懒初始化多智能体 Orchestrator"""
@@ -85,116 +92,15 @@ class AnalysisPipeline:
                 persist_decision_trace=True,
             ),
         )
+        self._owned.append(self._orchestrator)
 
     # ── Step 1: 数据采集 + KG 更新 ──
 
     def collect_and_update_kg(self, ticker: str) -> Dict[str, Any]:
-        """
-        采集 OHLCV / News / Fundamentals 并写入 Neo4j KG。
-
-        Returns:
-            采集结果摘要 {"ticker", "ohlcv_rows", "news_rows", "fundamental_rows"}
-        """
         self._ensure_kg()
-        logging.info("Start collecting ticker=%s", ticker)
-
-        market = MarketCollector(self.config)
-        news = NewsCollector(self.config)
-        global_news = GlobalNewsCollector(self.config)
-        fundamental = FundamentalCollector(self.config)
-
-        summary: Dict[str, Any] = {
-            "ticker": ticker,
-            "ohlcv_rows": 0,
-            "news_rows": 0,
-            "fundamental_rows": 0,
-        }
-
-        # ── OHLCV ──
-        ohlcv_df = market.fetch_ohlcv(ticker)
-        summary["ohlcv_rows"] = len(ohlcv_df)
-        logging.info("OHLCV: %d rows", len(ohlcv_df))
-
-        # ── News: Tavily → NewsAPI → dedup ──
-        news_frames: list[pd.DataFrame] = []
-        news_df = news.fetch_news(ticker, limit=self.config.news_limit_per_ticker)
-        if not news_df.empty:
-            news_frames.append(news_df)
-        try:
-            newsapi = NewsAPICollector(self.config)
-            newsapi_df = newsapi.fetch_news(ticker, limit=self.config.news_limit_per_ticker)
-            if not newsapi_df.empty:
-                news_frames.append(newsapi_df)
-        except ValueError:
-            logging.info("NewsAPI key not set, skipping")
-        except Exception as exc:
-            logging.warning("NewsAPI fetch failed for %s: %s", ticker, exc)
-
-        if len(news_frames) > 1:
-            combined = pd.concat(news_frames, ignore_index=True)
-            if "url" in combined.columns:
-                combined = combined.drop_duplicates(subset=["url"], keep="first")
-            if "title" in combined.columns:
-                combined = combined.drop_duplicates(subset=["title"], keep="first")
-            news_df = combined
-        elif news_frames:
-            news_df = news_frames[0]
-
-        summary["news_rows"] = len(news_df)
-        logging.info("News: %d rows", len(news_df))
-
-        # ── Global macro news ──
-        global_news_df = global_news.fetch_global_news(ticker=ticker, limit=50)
-        summary["global_news_rows"] = len(global_news_df)
-        logging.info("Global news: %d rows", len(global_news_df))
-
-        # ── Fundamentals ──
-        fundamentals_df = fundamental.fetch_fundamentals(ticker)
-        summary["fundamental_rows"] = len(fundamentals_df)
-        logging.info("Fundamentals: %d rows", len(fundamentals_df))
-
-        # ── KG: Company entity ──
-        self._kg_store.upsert_entities([
-            Entity(entity_id=f"company:{ticker}", type="Company", properties={"ticker": ticker})
-        ])
-
-        # ── KG: Technical signals ──
-        tech = TechnicalAgent()
-        sig_ents, sig_rels = tech.build_signal_entities_from_ohlcv(ticker, ohlcv_df)
-        self._kg_store.upsert_entities(sig_ents)
-        self._kg_store.upsert_relations(sig_rels)
-        logging.info("Technical KG updated: %d entities, %d relations", len(sig_ents), len(sig_rels))
-
-        # ── KG: News ──
-        n_ents, n_evs, n_rels = build_news_from_frame(ticker, news_df)
-        self._kg_store.upsert_entities(n_ents)
-        self._kg_store.upsert_evidences(n_evs)
-        self._kg_store.upsert_relations(n_rels)
-        logging.info("News KG updated: %d entities, %d evidences", len(n_ents), len(n_evs))
-
-        # ── KG: Global macro news ──
-        if not global_news_df.empty:
-            gn_ents, gn_evs, gn_rels = build_global_news_from_frame(ticker, global_news_df)
-            self._kg_store.upsert_entities(gn_ents)
-            self._kg_store.upsert_evidences(gn_evs)
-            self._kg_store.upsert_relations(gn_rels)
-            logging.info("Global news KG updated: %d entities", len(gn_ents))
-
-        # ── KG: Fundamentals ──
-        f_ents, f_evs, f_rels = build_fundamentals_from_frame(ticker, fundamentals_df)
-        self._kg_store.upsert_entities(f_ents)
-        self._kg_store.upsert_evidences(f_evs)
-        self._kg_store.upsert_relations(f_rels)
-        logging.info("Fundamental KG updated: %d entities", len(f_ents))
-
-        # ── KG: Risk events ──
-        r_ents, r_evs, r_rels = build_risk_events_from_frame(ticker, ohlcv_df, fundamentals_df)
-        self._kg_store.upsert_entities(r_ents)
-        self._kg_store.upsert_evidences(r_evs)
-        self._kg_store.upsert_relations(r_rels)
-        logging.info("Risk KG updated: %d entities", len(r_ents))
-
-        return summary
+        from src.collectors.service import AnalysisCollectionService
+        return AnalysisCollectionService(self.config, self._kg_store,
+            collectors=self._collectors, technical_agent=self._technical_agent).run(ticker)
 
     # ── Step 2: 多智能体决策 ──
 
@@ -238,7 +144,7 @@ class AnalysisPipeline:
         if with_backtest:
             bt_cfg = BacktestConfig()
             ticker_dir = self.config.output_root / ticker
-            ohlcv_path = ticker_dir / "ohlcv_2021_now.parquet"
+            ohlcv_path = resolve_ohlcv_path(self.config.output_root, ticker, current_only=True)
             if ohlcv_path.exists():
                 ohlcv_df = pd.read_parquet(ohlcv_path)
                 bt_result = compute_trade_return(
@@ -263,15 +169,15 @@ class AnalysisPipeline:
     # ── 资源释放 ──
 
     def close(self):
-        if self._orchestrator:
-            self._orchestrator.close()
-            self._orchestrator = None
-        if self._kg_client:
-            self._kg_client.close()
-            self._kg_client = None
-        if self._kg_store:
-            self._kg_store.close()
-            self._kg_store = None
+        resources, self._owned = self._owned, []
+        try:
+            for resource in reversed(resources):
+                try:
+                    resource.close()
+                except Exception:
+                    logging.exception("Failed to close pipeline resource")
+        finally:
+            self._orchestrator = self._kg_client = self._kg_store = None
 
     def __enter__(self):
         return self

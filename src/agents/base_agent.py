@@ -1,14 +1,13 @@
-# base agent for all agents to inherit 
-
+"""Generic execution contract: analysts and signal builders return different types."""
 from abc import ABC, abstractmethod
-from typing import Any
-from src.kg.schema import GraphUpdate
+from typing import Any, Generic, TypeVar
 
+AgentResult = TypeVar("AgentResult")
 
-class BaseAgent(ABC):
+class BaseAgent(ABC, Generic[AgentResult]):
     def __init__(self, name: str) -> None:
         self.name = name
 
     @abstractmethod
-    def run(self, input_data: dict[str, Any]) -> GraphUpdate:
+    def run(self, input_data: dict[str, Any]) -> AgentResult:
         raise NotImplementedError

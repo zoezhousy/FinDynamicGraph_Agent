@@ -43,3 +43,25 @@ class CollectionConfig:
     llm_api_base: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+
+@dataclass(frozen=True)
+class ExperimentConfig:
+    protocol_version: str = "legacy"
+    output_dir: Path = Path("data/experiments")
+    run_id: str | None = None
+    resume: bool = False
+    holding_days: int = 5
+    transaction_cost_bp: float = 5.0
+    evaluation_version: str = "legacy"
+
+    def __post_init__(self):
+        if self.protocol_version not in {"legacy", "pit_v1"}:
+            raise ValueError("protocol_version must be legacy or pit_v1")
+        if self.evaluation_version not in {"legacy", "v2"}:
+            raise ValueError("evaluation_version must be legacy or v2")
+        if self.evaluation_version == "v2" and self.protocol_version != "pit_v1":
+            raise ValueError("evaluation v2 requires pit_v1")
+        if self.holding_days < 1 or self.transaction_cost_bp < 0:
+            raise ValueError("Invalid backtest configuration")
+        if self.resume and not self.run_id:
+            raise ValueError("resume requires run_id")

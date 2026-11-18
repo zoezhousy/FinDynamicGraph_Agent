@@ -64,13 +64,17 @@ def _parse_dt_safe(val: Any) -> datetime | None:
 # citation_precision
 # ---------------------------------------------------------------------------
 
-def citation_precision(records: RecordCollection) -> float:
+def citation_precision(records: RecordCollection, *, evaluation_version: str = "legacy") -> float:
     """Fraction of decision evidence_refs / claim_refs that exist in the subgraph.
 
     When ``retrieved_evidence_ids`` / ``retrieved_claim_ids`` columns are
     present (produced by ``extract_retrieved_ids`` in the KG pipeline), each
     cited ref is checked against that ground-truth set.  A ref that is NOT in
     the retrieved set is counted as a hallucinated citation.
+
+    In v2, explicit empty retrieved sets validate no citations; missing ground
+    truth or no citations is unmeasurable (NaN). Evidence and claim IDs are
+    checked separately. Legacy behavior below remains the default.
 
     Falls back to the old conservative heuristic (non-empty ⇒ valid) when the
     retrieved-ID columns are absent (e.g. baseline systems that never query a
@@ -79,14 +83,30 @@ def citation_precision(records: RecordCollection) -> float:
     Returns:
         float in [0, 1].  1.0 = every cited ref traces to a real subgraph entity.
     """
+    if evaluation_version not in {"legacy", "v2"}:
+        raise ValueError("evaluation_version must be legacy or v2")
     rows = _to_records(records)
     if not rows:
-        return 0.0
+        return float("nan") if evaluation_version == "v2" else 0.0
 
     total_refs = 0
     existing_refs = 0
 
     for row in rows:
+        if evaluation_version == "v2":
+            evidence_refs = _safe_list(row.get("evidence_refs"))
+            claim_refs = _safe_list(row.get("claim_refs"))
+            for refs, field in ((evidence_refs, "retrieved_evidence_ids"), (claim_refs, "retrieved_claim_ids")):
+                if not refs:
+                    continue
+                # Missing ground truth is unmeasurable; an explicit empty list is authoritative.
+                value = row.get(field)
+                if not isinstance(value, list) and not (isinstance(value, str) and value.strip().startswith("[") and value.strip().endswith("]")):
+                    return float("nan")
+                retrieved = {str(ref).strip() for ref in _safe_list(value)}
+                total_refs += len(refs)
+                existing_refs += sum(str(ref).strip() in retrieved for ref in refs)
+            continue
         # Collect all cited IDs (evidence + claims)
         refs = _safe_list(row.get("evidence_refs")) + _safe_list(row.get("claim_refs"))
 
@@ -108,7 +128,7 @@ def citation_precision(records: RecordCollection) -> float:
             existing_refs += len(refs)
 
     if total_refs == 0:
-        return 0.0
+        return float("nan") if evaluation_version == "v2" else 0.0
     return existing_refs / total_refs
 
 
@@ -176,12 +196,16 @@ def unsupported_claim_rate(records: RecordCollection) -> float:
 def stale_evidence_rate(
     records: RecordCollection,
     staleness_days: int = 30,
+    *, evaluation_version: str = "legacy",
 ) -> float:
     """Fraction of evidence that is stale relative to trade_date.
 
     An evidence is stale if:
     - its published_at is more than staleness_days before trade_date, OR
     - its valid_to is set and is before trade_date
+
+    In v2, uses the versioned aggregation counts, excluding unknown evidence
+    from the denominator; missing counts or no classified evidence yields NaN.
 
     When stale_evidence_count and fresh_evidence_count columns exist,
     uses them directly. Otherwise falls back to conservative estimation.
@@ -191,8 +215,10 @@ def stale_evidence_rate(
     """
     rows = _to_records(records)
     if not rows:
-        return 0.0
+        return float("nan") if evaluation_version == "v2" else 0.0
 
+    if evaluation_version not in {"legacy", "v2"}:
+        raise ValueError("evaluation_version must be legacy or v2")
     total_stale = 0
     total_evidence = 0
 
@@ -211,6 +237,9 @@ def stale_evidence_rate(
             except (ValueError, TypeError):
                 pass
 
+        if evaluation_version == "v2":
+            return float("nan")
+
         # Fallback: count from evidence_refs length
         refs = _safe_list(row.get("evidence_refs"))
         n_refs = len(refs)
@@ -226,7 +255,7 @@ def stale_evidence_rate(
         total_evidence += n_refs
 
     if total_evidence == 0:
-        return 0.0
+        return float("nan") if evaluation_version == "v2" else 0.0
     return total_stale / total_evidence
 
 
@@ -257,7 +286,7 @@ def evidence_coverage(records: RecordCollection) -> float:
 # Aggregate helper
 # ---------------------------------------------------------------------------
 
-def compute_grounding_metrics(records: RecordCollection) -> Dict[str, float]:
+def compute_grounding_metrics(records: RecordCollection, *, evaluation_version: str = "legacy") -> Dict[str, float]:
     """Compute all grounding metrics at once.
 
     Returns a dict with keys:
@@ -265,19 +294,19 @@ def compute_grounding_metrics(records: RecordCollection) -> Dict[str, float]:
         stale_evidence_rate, evidence_coverage
     """
     return {
-        "citation_precision": citation_precision(records),
+        "citation_precision": citation_precision(records, evaluation_version=evaluation_version),
         "claim_coverage": claim_coverage(records),
         "unsupported_claim_rate": unsupported_claim_rate(records),
-        "stale_evidence_rate": stale_evidence_rate(records),
+        "stale_evidence_rate": stale_evidence_rate(records, evaluation_version=evaluation_version),
         "evidence_coverage": evidence_coverage(records),
     }
 
 
-def grounding_metrics_by_system(trades: pd.DataFrame) -> pd.DataFrame:
+def grounding_metrics_by_system(trades: pd.DataFrame, *, evaluation_version: str = "legacy") -> pd.DataFrame:
     """Compute grounding metrics grouped by system."""
     rows = []
     for system_name, group in trades.groupby("system"):
-        metrics = compute_grounding_metrics(group)
+        metrics = compute_grounding_metrics(group, evaluation_version=evaluation_version)
         metrics["system"] = system_name
         rows.append(metrics)
 

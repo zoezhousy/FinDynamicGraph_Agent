@@ -119,10 +119,15 @@ class TestFilterClaimsByDate:
         result = filter_claims_by_date(claims, _dt("2024-06-01"))
         assert len(result) == 1
 
-    def test_excludes_inactive_claims(self):
+    def test_historical_query_ignores_current_is_active_flag(self):
         claims = [_make_claim("c1", is_active=False)]
         result = filter_claims_by_date(claims, _dt("2024-06-01"))
-        assert len(result) == 0
+        assert len(result) == 1
+
+    def test_excludes_claim_not_yet_effective(self):
+        claim = _make_claim("c1")
+        claim["effective_at"] = "2024-07-01"
+        assert filter_claims_by_date([claim], _dt("2024-06-01")) == []
 
     def test_handles_none_valid_from(self):
         claims = [_make_claim("c1", valid_from=None)]
@@ -149,10 +154,15 @@ class TestFilterEvidenceByDate:
         result = filter_evidence_by_date(evs, _dt("2024-06-01"))
         assert len(result) == 0
 
-    def test_excludes_inactive_evidence(self):
+    def test_historical_query_ignores_current_is_active_flag(self):
         evs = [_make_evidence("ev1", is_active=False)]
         result = filter_evidence_by_date(evs, _dt("2024-06-01"))
-        assert len(result) == 0
+        assert len(result) == 1
+
+    def test_excludes_evidence_not_yet_effective(self):
+        ev = _make_evidence("ev1")
+        ev["effective_at"] = "2024-07-01"
+        assert filter_evidence_by_date([ev], _dt("2024-06-01")) == []
 
 
 # ── Test: filter_signals_by_date ───────────────────────────────────────
@@ -178,6 +188,11 @@ class TestFilterSignalsByDate:
         sigs = [_make_signal("s1", valid_from="2024-01-01", valid_to="2024-12-01")]
         result = filter_signals_by_date(sigs, _dt("2024-06-01"))
         assert len(result) == 1
+
+    def test_excludes_signal_not_yet_effective(self):
+        signal = _make_signal("s1")
+        signal["effective_at"] = "2024-07-01"
+        assert filter_signals_by_date([signal], _dt("2024-06-01")) == []
 
 
 # ── Test: Contradiction / Conflict detection ───────────────────────────

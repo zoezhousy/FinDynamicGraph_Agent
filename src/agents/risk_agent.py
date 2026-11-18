@@ -9,8 +9,9 @@ from src.agents.base_agent import BaseAgent
 from src.agents.roles import AgentReport, risk_agent as run_risk_agent
 
 
-class RiskAgent(BaseAgent):
-    def __init__(self) -> None:
+class RiskAgent(BaseAgent[AgentReport]):
+    def __init__(self, client=None) -> None:
+        self.client = client
         super().__init__("risk_agent")
 
     def run(self, input_data: dict) -> AgentReport:
@@ -23,7 +24,7 @@ class RiskAgent(BaseAgent):
             return self._run_from_kg_risks(risks)
 
         # Fallback: keep previous LLM behavior if no explicit risk KG exists.
-        return run_risk_agent(subgraph, ticker, trade_date)
+        return run_risk_agent(subgraph, ticker, trade_date, **({"client": self.client} if self.client is not None else {}))
 
     def _run_from_kg_risks(self, risks: list[dict[str, Any]]) -> AgentReport:
         bearish_risks = [

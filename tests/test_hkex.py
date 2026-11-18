@@ -5,7 +5,6 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from tqdm import tqdm
 
 
 BASE_URL = "https://www1.hkexnews.hk"
@@ -137,6 +136,7 @@ def search_hkex_announcements(
 
 
 def download_pdfs(df: pd.DataFrame, output_dir: str = "hkex_announcements"):
+    from tqdm import tqdm
     os.makedirs(output_dir, exist_ok=True)
 
     for _, row in tqdm(df.iterrows(), total=len(df)):

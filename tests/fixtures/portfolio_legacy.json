@@ -1,0 +1,698 @@
+[
+  {
+    "reports": [
+      {
+        "role": "technical",
+        "stance": "bullish",
+        "confidence": 0.9,
+        "score": 1,
+        "summary": "fixed",
+        "evidence_refs": [
+          "ev1"
+        ],
+        "claim_refs": [],
+        "factors": []
+      }
+    ],
+    "subgraph": {
+      "evidences": [
+        {
+          "evidence_id": "ev1",
+          "published_at": "2025-06-01"
+        }
+      ]
+    },
+    "expected": {
+      "ticker": "0700.HK",
+      "trade_date": "2025-06-01",
+      "action": "buy",
+      "final_score": 0.315,
+      "confidence": 0.9,
+      "conflict_level": 0.0,
+      "decision_reason": "Weighted agent aggregation is net bullish.",
+      "evidence_refs": [
+        "ev1"
+      ],
+      "claim_refs": [],
+      "retrieved_evidence_ids": [
+        "ev1"
+      ],
+      "retrieved_claim_ids": [],
+      "supporting_roles": [
+        "technical"
+      ],
+      "opposing_roles": [],
+      "stale_evidence_count": 0,
+      "fresh_evidence_count": 1,
+      "evidence_alignment": "aligned",
+      "trace": {
+        "technical_score": 0.315,
+        "news_score": 0.0,
+        "fundamental_score": 0.0,
+        "risk_score": 0.0
+      },
+      "agent_reports": [
+        {
+          "role": "technical",
+          "stance": "bullish",
+          "confidence": 0.9,
+          "score": 1,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": []
+        }
+      ],
+      "decision_trace": {
+        "decision_id": "decision:0700.HK:2025-06-01",
+        "ticker": "0700.HK",
+        "trade_date": "2025-06-01T00:00:00",
+        "action": "buy",
+        "final_score": 0.315,
+        "confidence": 0.9,
+        "conflict_level": 0.0,
+        "decision_reason": "Weighted agent aggregation is net bullish.",
+        "bullish_support_count": 1,
+        "bearish_support_count": 0,
+        "neutral_support_count": 0,
+        "evidence_ids": [
+          "ev1"
+        ],
+        "claim_ids": [],
+        "supporting_roles": [
+          "technical"
+        ],
+        "opposing_roles": [],
+        "stale_evidence_count": 0,
+        "fresh_evidence_count": 1,
+        "evidence_alignment": "aligned",
+        "trace": {
+          "technical_score": 0.315,
+          "news_score": 0.0,
+          "fundamental_score": 0.0,
+          "risk_score": 0.0
+        }
+      },
+      "agent_assessments": [
+        {
+          "assessment_id": "assessment:technical:0700.HK:2025-06-01",
+          "ticker": "0700.HK",
+          "trade_date": "2025-06-01T00:00:00",
+          "agent_role": "technical",
+          "stance": "bullish",
+          "confidence": 0.9,
+          "score": 1.0,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": [],
+          "supports_decision": true,
+          "opposes_decision": false
+        }
+      ]
+    }
+  },
+  {
+    "reports": [
+      {
+        "role": "technical",
+        "stance": "bearish",
+        "confidence": 0.9,
+        "score": -1,
+        "summary": "fixed",
+        "evidence_refs": [
+          "ev1"
+        ],
+        "claim_refs": [],
+        "factors": []
+      }
+    ],
+    "subgraph": {
+      "evidences": [
+        {
+          "evidence_id": "ev1",
+          "published_at": "2025-06-01"
+        }
+      ]
+    },
+    "expected": {
+      "ticker": "0700.HK",
+      "trade_date": "2025-06-01",
+      "action": "sell",
+      "final_score": -0.315,
+      "confidence": 0.9,
+      "conflict_level": 0.0,
+      "decision_reason": "Weighted agent aggregation is net bearish.",
+      "evidence_refs": [
+        "ev1"
+      ],
+      "claim_refs": [],
+      "retrieved_evidence_ids": [
+        "ev1"
+      ],
+      "retrieved_claim_ids": [],
+      "supporting_roles": [
+        "technical"
+      ],
+      "opposing_roles": [],
+      "stale_evidence_count": 0,
+      "fresh_evidence_count": 1,
+      "evidence_alignment": "aligned",
+      "trace": {
+        "technical_score": -0.315,
+        "news_score": 0.0,
+        "fundamental_score": 0.0,
+        "risk_score": 0.0
+      },
+      "agent_reports": [
+        {
+          "role": "technical",
+          "stance": "bearish",
+          "confidence": 0.9,
+          "score": -1,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": []
+        }
+      ],
+      "decision_trace": {
+        "decision_id": "decision:0700.HK:2025-06-01",
+        "ticker": "0700.HK",
+        "trade_date": "2025-06-01T00:00:00",
+        "action": "sell",
+        "final_score": -0.315,
+        "confidence": 0.9,
+        "conflict_level": 0.0,
+        "decision_reason": "Weighted agent aggregation is net bearish.",
+        "bullish_support_count": 0,
+        "bearish_support_count": 1,
+        "neutral_support_count": 0,
+        "evidence_ids": [
+          "ev1"
+        ],
+        "claim_ids": [],
+        "supporting_roles": [
+          "technical"
+        ],
+        "opposing_roles": [],
+        "stale_evidence_count": 0,
+        "fresh_evidence_count": 1,
+        "evidence_alignment": "aligned",
+        "trace": {
+          "technical_score": -0.315,
+          "news_score": 0.0,
+          "fundamental_score": 0.0,
+          "risk_score": 0.0
+        }
+      },
+      "agent_assessments": [
+        {
+          "assessment_id": "assessment:technical:0700.HK:2025-06-01",
+          "ticker": "0700.HK",
+          "trade_date": "2025-06-01T00:00:00",
+          "agent_role": "technical",
+          "stance": "bearish",
+          "confidence": 0.9,
+          "score": -1.0,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": [],
+          "supports_decision": true,
+          "opposes_decision": false
+        }
+      ]
+    }
+  },
+  {
+    "reports": [
+      {
+        "role": "technical",
+        "stance": "neutral",
+        "confidence": 0.5,
+        "score": 0,
+        "summary": "fixed",
+        "evidence_refs": [
+          "ev1"
+        ],
+        "claim_refs": [],
+        "factors": []
+      }
+    ],
+    "subgraph": {
+      "evidences": [
+        {
+          "evidence_id": "ev1",
+          "published_at": "2025-06-01"
+        }
+      ]
+    },
+    "expected": {
+      "ticker": "0700.HK",
+      "trade_date": "2025-06-01",
+      "action": "hold",
+      "final_score": 0.0,
+      "confidence": 0.5,
+      "conflict_level": 0.0,
+      "decision_reason": "Signals are mixed or not strong enough for directional action.",
+      "evidence_refs": [
+        "ev1"
+      ],
+      "claim_refs": [],
+      "retrieved_evidence_ids": [
+        "ev1"
+      ],
+      "retrieved_claim_ids": [],
+      "supporting_roles": [
+        "technical"
+      ],
+      "opposing_roles": [],
+      "stale_evidence_count": 0,
+      "fresh_evidence_count": 1,
+      "evidence_alignment": "aligned",
+      "trace": {
+        "technical_score": 0.0,
+        "news_score": 0.0,
+        "fundamental_score": 0.0,
+        "risk_score": 0.0
+      },
+      "agent_reports": [
+        {
+          "role": "technical",
+          "stance": "neutral",
+          "confidence": 0.5,
+          "score": 0,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": []
+        }
+      ],
+      "decision_trace": {
+        "decision_id": "decision:0700.HK:2025-06-01",
+        "ticker": "0700.HK",
+        "trade_date": "2025-06-01T00:00:00",
+        "action": "hold",
+        "final_score": 0.0,
+        "confidence": 0.5,
+        "conflict_level": 0.0,
+        "decision_reason": "Signals are mixed or not strong enough for directional action.",
+        "bullish_support_count": 0,
+        "bearish_support_count": 0,
+        "neutral_support_count": 1,
+        "evidence_ids": [
+          "ev1"
+        ],
+        "claim_ids": [],
+        "supporting_roles": [
+          "technical"
+        ],
+        "opposing_roles": [],
+        "stale_evidence_count": 0,
+        "fresh_evidence_count": 1,
+        "evidence_alignment": "aligned",
+        "trace": {
+          "technical_score": 0.0,
+          "news_score": 0.0,
+          "fundamental_score": 0.0,
+          "risk_score": 0.0
+        }
+      },
+      "agent_assessments": [
+        {
+          "assessment_id": "assessment:technical:0700.HK:2025-06-01",
+          "ticker": "0700.HK",
+          "trade_date": "2025-06-01T00:00:00",
+          "agent_role": "technical",
+          "stance": "neutral",
+          "confidence": 0.5,
+          "score": 0.0,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": [],
+          "supports_decision": true,
+          "opposes_decision": false
+        }
+      ]
+    }
+  },
+  {
+    "reports": [
+      {
+        "role": "technical",
+        "stance": "uncertain",
+        "confidence": 0,
+        "score": 0,
+        "summary": "fixed",
+        "evidence_refs": [],
+        "claim_refs": [],
+        "factors": []
+      }
+    ],
+    "subgraph": {
+      "evidences": [
+        {
+          "evidence_id": "ev1",
+          "published_at": "2025-06-01"
+        }
+      ]
+    },
+    "expected": {
+      "ticker": "0700.HK",
+      "trade_date": "2025-06-01",
+      "action": "hold",
+      "final_score": 0.0,
+      "confidence": 0.05,
+      "conflict_level": 0.0,
+      "decision_reason": "Signals are mixed or not strong enough for directional action.",
+      "evidence_refs": [
+        "ev1"
+      ],
+      "claim_refs": [],
+      "retrieved_evidence_ids": [
+        "ev1"
+      ],
+      "retrieved_claim_ids": [],
+      "supporting_roles": [
+        "technical"
+      ],
+      "opposing_roles": [],
+      "stale_evidence_count": 0,
+      "fresh_evidence_count": 1,
+      "evidence_alignment": "aligned",
+      "trace": {
+        "technical_score": 0.0,
+        "news_score": 0.0,
+        "fundamental_score": 0.0,
+        "risk_score": 0.0
+      },
+      "agent_reports": [
+        {
+          "role": "technical",
+          "stance": "uncertain",
+          "confidence": 0,
+          "score": 0,
+          "summary": "fixed",
+          "evidence_refs": [],
+          "claim_refs": [],
+          "factors": []
+        }
+      ],
+      "decision_trace": {
+        "decision_id": "decision:0700.HK:2025-06-01",
+        "ticker": "0700.HK",
+        "trade_date": "2025-06-01T00:00:00",
+        "action": "hold",
+        "final_score": 0.0,
+        "confidence": 0.05,
+        "conflict_level": 0.0,
+        "decision_reason": "Signals are mixed or not strong enough for directional action.",
+        "bullish_support_count": 0,
+        "bearish_support_count": 0,
+        "neutral_support_count": 1,
+        "evidence_ids": [
+          "ev1"
+        ],
+        "claim_ids": [],
+        "supporting_roles": [
+          "technical"
+        ],
+        "opposing_roles": [],
+        "stale_evidence_count": 0,
+        "fresh_evidence_count": 1,
+        "evidence_alignment": "aligned",
+        "trace": {
+          "technical_score": 0.0,
+          "news_score": 0.0,
+          "fundamental_score": 0.0,
+          "risk_score": 0.0
+        }
+      },
+      "agent_assessments": [
+        {
+          "assessment_id": "assessment:technical:0700.HK:2025-06-01",
+          "ticker": "0700.HK",
+          "trade_date": "2025-06-01T00:00:00",
+          "agent_role": "technical",
+          "stance": "uncertain",
+          "confidence": 0.0,
+          "score": 0.0,
+          "summary": "fixed",
+          "evidence_refs": [],
+          "claim_refs": [],
+          "factors": [],
+          "supports_decision": true,
+          "opposes_decision": false
+        }
+      ]
+    }
+  },
+  {
+    "reports": [
+      {
+        "role": "technical",
+        "stance": "bullish",
+        "confidence": 1,
+        "score": 0.34285714285714286,
+        "summary": "fixed",
+        "evidence_refs": [
+          "ev1"
+        ],
+        "claim_refs": [],
+        "factors": []
+      }
+    ],
+    "subgraph": {
+      "evidences": [
+        {
+          "evidence_id": "ev1",
+          "published_at": "2025-06-01"
+        }
+      ]
+    },
+    "expected": {
+      "ticker": "0700.HK",
+      "trade_date": "2025-06-01",
+      "action": "buy",
+      "final_score": 0.12,
+      "confidence": 0.95,
+      "conflict_level": 0.0,
+      "decision_reason": "Weighted agent aggregation is net bullish.",
+      "evidence_refs": [
+        "ev1"
+      ],
+      "claim_refs": [],
+      "retrieved_evidence_ids": [
+        "ev1"
+      ],
+      "retrieved_claim_ids": [],
+      "supporting_roles": [
+        "technical"
+      ],
+      "opposing_roles": [],
+      "stale_evidence_count": 0,
+      "fresh_evidence_count": 1,
+      "evidence_alignment": "aligned",
+      "trace": {
+        "technical_score": 0.12,
+        "news_score": 0.0,
+        "fundamental_score": 0.0,
+        "risk_score": 0.0
+      },
+      "agent_reports": [
+        {
+          "role": "technical",
+          "stance": "bullish",
+          "confidence": 1,
+          "score": 0.34285714285714286,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": []
+        }
+      ],
+      "decision_trace": {
+        "decision_id": "decision:0700.HK:2025-06-01",
+        "ticker": "0700.HK",
+        "trade_date": "2025-06-01T00:00:00",
+        "action": "buy",
+        "final_score": 0.12,
+        "confidence": 0.95,
+        "conflict_level": 0.0,
+        "decision_reason": "Weighted agent aggregation is net bullish.",
+        "bullish_support_count": 1,
+        "bearish_support_count": 0,
+        "neutral_support_count": 0,
+        "evidence_ids": [
+          "ev1"
+        ],
+        "claim_ids": [],
+        "supporting_roles": [
+          "technical"
+        ],
+        "opposing_roles": [],
+        "stale_evidence_count": 0,
+        "fresh_evidence_count": 1,
+        "evidence_alignment": "aligned",
+        "trace": {
+          "technical_score": 0.12,
+          "news_score": 0.0,
+          "fundamental_score": 0.0,
+          "risk_score": 0.0
+        }
+      },
+      "agent_assessments": [
+        {
+          "assessment_id": "assessment:technical:0700.HK:2025-06-01",
+          "ticker": "0700.HK",
+          "trade_date": "2025-06-01T00:00:00",
+          "agent_role": "technical",
+          "stance": "bullish",
+          "confidence": 1.0,
+          "score": 0.3429,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": [],
+          "supports_decision": true,
+          "opposes_decision": false
+        }
+      ]
+    }
+  },
+  {
+    "reports": [
+      {
+        "role": "technical",
+        "stance": "bearish",
+        "confidence": 1,
+        "score": -0.34285714285714286,
+        "summary": "fixed",
+        "evidence_refs": [
+          "ev1"
+        ],
+        "claim_refs": [],
+        "factors": []
+      }
+    ],
+    "subgraph": {
+      "evidences": [
+        {
+          "evidence_id": "ev1",
+          "published_at": "2025-06-01"
+        }
+      ]
+    },
+    "expected": {
+      "ticker": "0700.HK",
+      "trade_date": "2025-06-01",
+      "action": "sell",
+      "final_score": -0.12,
+      "confidence": 0.95,
+      "conflict_level": 0.0,
+      "decision_reason": "Weighted agent aggregation is net bearish.",
+      "evidence_refs": [
+        "ev1"
+      ],
+      "claim_refs": [],
+      "retrieved_evidence_ids": [
+        "ev1"
+      ],
+      "retrieved_claim_ids": [],
+      "supporting_roles": [
+        "technical"
+      ],
+      "opposing_roles": [],
+      "stale_evidence_count": 0,
+      "fresh_evidence_count": 1,
+      "evidence_alignment": "aligned",
+      "trace": {
+        "technical_score": -0.12,
+        "news_score": 0.0,
+        "fundamental_score": 0.0,
+        "risk_score": 0.0
+      },
+      "agent_reports": [
+        {
+          "role": "technical",
+          "stance": "bearish",
+          "confidence": 1,
+          "score": -0.34285714285714286,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": []
+        }
+      ],
+      "decision_trace": {
+        "decision_id": "decision:0700.HK:2025-06-01",
+        "ticker": "0700.HK",
+        "trade_date": "2025-06-01T00:00:00",
+        "action": "sell",
+        "final_score": -0.12,
+        "confidence": 0.95,
+        "conflict_level": 0.0,
+        "decision_reason": "Weighted agent aggregation is net bearish.",
+        "bullish_support_count": 0,
+        "bearish_support_count": 1,
+        "neutral_support_count": 0,
+        "evidence_ids": [
+          "ev1"
+        ],
+        "claim_ids": [],
+        "supporting_roles": [
+          "technical"
+        ],
+        "opposing_roles": [],
+        "stale_evidence_count": 0,
+        "fresh_evidence_count": 1,
+        "evidence_alignment": "aligned",
+        "trace": {
+          "technical_score": -0.12,
+          "news_score": 0.0,
+          "fundamental_score": 0.0,
+          "risk_score": 0.0
+        }
+      },
+      "agent_assessments": [
+        {
+          "assessment_id": "assessment:technical:0700.HK:2025-06-01",
+          "ticker": "0700.HK",
+          "trade_date": "2025-06-01T00:00:00",
+          "agent_role": "technical",
+          "stance": "bearish",
+          "confidence": 1.0,
+          "score": -0.3429,
+          "summary": "fixed",
+          "evidence_refs": [
+            "ev1"
+          ],
+          "claim_refs": [],
+          "factors": [],
+          "supports_decision": true,
+          "opposes_decision": false
+        }
+      ]
+    }
+  }
+]

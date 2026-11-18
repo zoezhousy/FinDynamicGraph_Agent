@@ -22,6 +22,7 @@ class LLMConfig:
     timeout_seconds: int = 60
     temperature: float = 0.2
     max_tokens: int = 8192
+    deepseek_thinking: str | None = None
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -31,6 +32,9 @@ class LLMConfig:
         timeout_seconds = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
         temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
         max_tokens = int(os.getenv("LLM_MAX_TOKENS", "8192"))
+        deepseek_thinking = os.getenv("LLM_DEEPSEEK_THINKING") or None
+        if deepseek_thinking not in (None, "enabled", "disabled"):
+            raise ValueError("LLM_DEEPSEEK_THINKING must be enabled or disabled.")
         if not api_base or not api_key or not model:
             raise ValueError("Missing LLM_API_BASE, LLM_API_KEY, or LLM_MODEL in environment.")
         return cls(
@@ -40,6 +44,7 @@ class LLMConfig:
             timeout_seconds=timeout_seconds,
             temperature=temperature,
             max_tokens=max_tokens,
+            deepseek_thinking=deepseek_thinking,
         )
 
 class OpenAICompatibleClient:
@@ -50,6 +55,27 @@ class OpenAICompatibleClient:
         self.config = config or LLMConfig.from_env()
 
     def generate_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+        from src.eval.execution import record_call
+        self._last_attempts = 0
+        self._captured_content = None
+        self._captured_usage = {}
+        record = {"backend": "direct", "model": self.config.model, "system_prompt": system_prompt, "user_prompt": user_prompt}
+        try:
+            result = self._generate_json(system_prompt, user_prompt)
+            record["parsed_response"] = result
+            return result
+        except Exception as exc:
+            record["error_type"] = type(exc).__name__
+            raise
+        finally:
+            record["attempts"] = self._last_attempts
+            record["retry_count"] = max(0, self._last_attempts - 1)
+            record["raw_response"] = self._captured_content
+            if self._captured_usage:
+                record["usage"] = self._captured_usage
+            record_call(record)
+
+    def _generate_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
         url = f"{self.config.api_base}/chat/completions"
         payload = {
             "model": self.config.model,
@@ -65,9 +91,12 @@ class OpenAICompatibleClient:
         }
 
         payload["max_tokens"] = self.config.max_tokens
+        if self.config.deepseek_thinking is not None:
+            payload["thinking"] = {"type": self.config.deepseek_thinking}
 
         last_error: Exception | None = None
         for attempt in range(1, self.MAX_RETRIES + 1):
+            self._last_attempts = attempt
             try:
                 response = requests.post(
                     url,
@@ -90,6 +119,8 @@ class OpenAICompatibleClient:
                     raise
 
 
+        from src.eval.execution import token_usage
+        self._captured_usage = token_usage(data)
         message = data["choices"][0]["message"]
         content = message.get("content") or ""
 
@@ -116,6 +147,7 @@ class OpenAICompatibleClient:
         if not content or not str(content).strip():
             raise ValueError(f"LLM returned empty content: {data}")
 
+        self._captured_content = str(content)
         content = str(content).strip()
 
         # 去掉 ```json ... ``` 包裹
@@ -211,6 +243,9 @@ class OpenAICompatibleClient:
 
     def _log_response(self, content: str) -> None:
         """将 LLM 原始响应追加写入日志文件。"""
+        from src.eval.execution import current_capture
+        if current_capture() is not None:
+            return
         log_dir = Path("data/logs")
         log_dir.mkdir(parents=True, exist_ok=True)
 

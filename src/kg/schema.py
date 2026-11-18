@@ -22,6 +22,7 @@ ClaimPolarity = Literal["supports", "contradicts", "neutral", "unknown"]
 
 EntityType = Literal[
     "Company",
+    "Product",
     "IndicatorSignal",
     "NewsEvent",
     "FundamentalSignal",
@@ -38,6 +39,12 @@ EntityType = Literal[
 ]
 
 RelationType = Literal[
+    "PARTNERED",
+    "INVESTED_IN",
+    "SELLS",
+    "ACQUIRED",
+    "DIVESTED",
+    "EXTRACTED_FROM",
     "HAS_SIGNAL",
     "MENTIONED_IN",
     "SUPPORTED_BY",
@@ -68,6 +75,7 @@ class SourceDocument(BaseModel):
     url: str | None = None
     title: str | None = None
     published_at: datetime | None = None
+    effective_at: datetime | None = None
     retrieved_at: datetime | None = None
     content_hash: str | None = None
     raw_text_preview: str = ""
@@ -89,6 +97,7 @@ class Evidence(BaseModel):
     ingested_at: datetime | None = None
     valid_from: datetime | None = None
     valid_to: datetime | None = None
+    effective_at: datetime | None = None
     supersedes_id: str | None = None
     is_active: bool = True
 
@@ -105,6 +114,7 @@ class Claim(BaseModel):
     as_of_date: datetime
     valid_from: datetime | None = None
     valid_to: datetime | None = None
+    effective_at: datetime | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     version: int = 1
     ingested_at: datetime | None = None
@@ -127,6 +137,7 @@ class Relation(BaseModel):
     direction: Direction | None = None
     valid_from: datetime | None = None
     valid_to: datetime | None = None
+    effective_at: datetime | None = None
     evidence_ids: list[str] | None = None
     version: int = 1
     ingested_at: datetime | None = None
@@ -142,6 +153,7 @@ class FinancialSignal(BaseModel):
     strength: float = Field(ge=0.0, le=1.0)
     valid_from: datetime
     valid_to: datetime | None = None
+    effective_at: datetime | None = None
     evidence_id: str
     description: str
     version: int = 1
